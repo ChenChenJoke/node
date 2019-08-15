@@ -517,6 +517,8 @@ TEST(DisasmX64) {
       __ haddps(xmm1, xmm0);
       __ haddps(xmm1, Operand(rbx, rcx, times_4, 10000));
       __ lddqu(xmm1, Operand(rdx, 4));
+      __ movddup(xmm1, Operand(rax, 5));
+      __ movddup(xmm1, xmm2);
     }
   }
 
@@ -542,8 +544,11 @@ TEST(DisasmX64) {
       __ pinsrw(xmm2, rcx, 1);
       __ pextrd(rbx, xmm15, 0);
       __ pextrd(r12, xmm0, 1);
+      __ pextrq(r12, xmm0, 1);
       __ pinsrd(xmm9, r9, 0);
       __ pinsrd(xmm5, Operand(rax, 4), 1);
+      __ pinsrq(xmm9, r9, 0);
+      __ pinsrq(xmm5, Operand(rax, 4), 1);
       __ pblendw(xmm5, xmm1, 1);
       __ pblendw(xmm9, Operand(rax, 4), 1);
 
@@ -601,6 +606,14 @@ TEST(DisasmX64) {
       __ cvtdq2ps(xmm5, Operand(rdx, 4));
 
       SSE4_INSTRUCTION_LIST(EMIT_SSE34_INSTR)
+    }
+  }
+
+  {
+    if (CpuFeatures::IsSupported(SSE4_2)) {
+      CpuFeatureScope scope(&assm, SSE4_2);
+
+      SSE4_2_INSTRUCTION_LIST(EMIT_SSE34_INSTR)
     }
   }
 #undef EMIT_SSE34_INSTR
@@ -964,6 +977,8 @@ TEST(DisasmX64) {
     __ Nop(i);
   }
 
+  __ mfence();
+  __ lfence();
   __ pause();
   __ ret(0);
 

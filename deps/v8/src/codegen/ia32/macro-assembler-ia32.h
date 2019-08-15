@@ -87,7 +87,11 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Call(Label* target) { call(target); }
   void Call(Handle<Code> code_object, RelocInfo::Mode rmode);
 
-  void CallBuiltinPointer(Register builtin_pointer) override;
+  // Load the builtin given by the Smi in |builtin_index| into the same
+  // register.
+  void LoadEntryFromBuiltinIndex(Register builtin_index);
+  void CallBuiltinByIndex(Register builtin_index) override;
+  void CallBuiltin(int builtin_index);
 
   void LoadCodeObjectEntry(Register destination, Register code_object) override;
   void CallCodeObject(Register code_object) override;
@@ -210,7 +214,6 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
 
   void LoadAddress(Register destination, ExternalReference source);
 
-  void CompareStackLimit(Register with);
   void CompareRealStackLimit(Register with);
   void CompareRoot(Register with, RootIndex index);
   void CompareRoot(Register with, Register scratch, RootIndex index);

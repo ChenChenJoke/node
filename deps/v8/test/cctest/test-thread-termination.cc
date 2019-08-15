@@ -179,7 +179,7 @@ class TerminatorThread : public v8::base::Thread {
 void TestTerminatingSlowOperation(const char* source) {
   semaphore = new v8::base::Semaphore(0);
   TerminatorThread thread(CcTest::i_isolate());
-  thread.Start();
+  CHECK(thread.Start());
 
   v8::HandleScope scope(CcTest::isolate());
   v8::Local<v8::ObjectTemplate> global =
@@ -345,7 +345,7 @@ TEST(TerminateAndReenterFromThreadItself) {
       isolate, TerminateCurrentThread, ReenterAfterTermination);
   v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
   v8::Context::Scope context_scope(context);
-  CHECK(!v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  CHECK(!isolate->IsExecutionTerminating());
   // Create script strings upfront as it won't work when terminating.
   reenter_script_1.Reset(isolate, v8_str(
                                       "function f() {"
@@ -377,7 +377,7 @@ TEST(TerminateAndReenterFromThreadItselfWithOuterTryCatch) {
       isolate, TerminateCurrentThread, ReenterAfterTermination);
   v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
   v8::Context::Scope context_scope(context);
-  CHECK(!v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  CHECK(!isolate->IsExecutionTerminating());
   // Create script strings upfront as it won't work when terminating.
   reenter_script_1.Reset(isolate, v8_str("function f() {"
                                          "  var term = true;"
@@ -411,25 +411,25 @@ TEST(TerminateAndReenterFromThreadItselfWithOuterTryCatch) {
 }
 
 void DoLoopCancelTerminate(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  v8::TryCatch try_catch(args.GetIsolate());
-  CHECK(!v8::Isolate::GetCurrent()->IsExecutionTerminating());
-  v8::MaybeLocal<v8::Value> result =
-      CompileRun(args.GetIsolate()->GetCurrentContext(),
-                 "var term = true;"
-                 "while(true) {"
-                 "  if (term) terminate();"
-                 "  term = false;"
-                 "}"
-                 "fail();");
+  v8::Isolate* isolate = args.GetIsolate();
+  v8::TryCatch try_catch(isolate);
+  CHECK(!isolate->IsExecutionTerminating());
+  v8::MaybeLocal<v8::Value> result = CompileRun(isolate->GetCurrentContext(),
+                                                "var term = true;"
+                                                "while(true) {"
+                                                "  if (term) terminate();"
+                                                "  term = false;"
+                                                "}"
+                                                "fail();");
   CHECK(result.IsEmpty());
   CHECK(try_catch.HasCaught());
   CHECK(try_catch.Exception()->IsNull());
   CHECK(try_catch.Message().IsEmpty());
   CHECK(!try_catch.CanContinue());
-  CHECK(v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  CHECK(isolate->IsExecutionTerminating());
   CHECK(try_catch.HasTerminated());
-  CcTest::isolate()->CancelTerminateExecution();
-  CHECK(!v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  isolate->CancelTerminateExecution();
+  CHECK(!isolate->IsExecutionTerminating());
 }
 
 
@@ -467,14 +467,14 @@ void MicrotaskLoopForever(const v8::FunctionCallbackInfo<v8::Value>& info) {
       v8::Function::New(isolate->GetCurrentContext(), MicrotaskShouldNotRun)
           .ToLocalChecked());
   CompileRun("terminate(); while (true) { }");
-  CHECK(v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  CHECK(isolate->IsExecutionTerminating());
 }
 
 
 TEST(TerminateFromOtherThreadWhileMicrotaskRunning) {
   semaphore = new v8::base::Semaphore(0);
   TerminatorThread thread(CcTest::i_isolate());
-  thread.Start();
+  CHECK(thread.Start());
 
   v8::Isolate* isolate = CcTest::isolate();
   isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kExplicit);
@@ -782,10 +782,10 @@ TEST(TerminationInInnerTryCall) {
     CompileRun("inner_try_call_terminate()");
     CHECK(try_catch.HasTerminated());
   }
-  v8::Maybe<int32_t> result = CompileRun("2 + 2")->Int32Value(
-      v8::Isolate::GetCurrent()->GetCurrentContext());
+  v8::Maybe<int32_t> result =
+      CompileRun("2 + 2")->Int32Value(isolate->GetCurrentContext());
   CHECK_EQ(4, result.FromJust());
-  CHECK(!v8::Isolate::GetCurrent()->IsExecutionTerminating());
+  CHECK(!isolate->IsExecutionTerminating());
 }
 
 
@@ -816,8 +816,8 @@ TEST(TerminateAndTryCall) {
     CHECK(isolate->IsExecutionTerminating());
   }
   // V8 then recovers.
-  v8::Maybe<int32_t> result = CompileRun("2 + 2")->Int32Value(
-      v8::Isolate::GetCurrent()->GetCurrentContext());
+  v8::Maybe<int32_t> result =
+      CompileRun("2 + 2")->Int32Value(isolate->GetCurrentContext());
   CHECK_EQ(4, result.FromJust());
   CHECK(!isolate->IsExecutionTerminating());
 }
@@ -878,7 +878,7 @@ TEST(TerminateRegExp) {
   CHECK(!isolate->IsExecutionTerminating());
   CHECK(!CompileRun("var re = /(x+)+y$/; re.test('x');").IsEmpty());
   TerminatorSleeperThread terminator(isolate, 100);
-  terminator.Start();
+  CHECK(terminator.Start());
   CHECK(CompileRun("re.test('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'); fail();")
             .IsEmpty());
   CHECK(try_catch.HasCaught());

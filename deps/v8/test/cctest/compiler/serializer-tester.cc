@@ -70,7 +70,11 @@ void CheckForSerializedInlinee(const char* source, int argc = 0,
   Handle<Object> g;
   CHECK(g_obj.ToHandle(&g));
 
+  CHECK_WITH_MSG(
+      g->IsJSFunction(),
+      "The return value of the outer function must be a function too");
   Handle<JSFunction> g_func = Handle<JSFunction>::cast(g);
+
   SharedFunctionInfoRef g_sfi(tester.broker(),
                               handle(g_func->shared(), tester.isolate()));
   FeedbackVectorRef g_fv(tester.broker(),
@@ -264,7 +268,7 @@ TEST(SerializeUnconditionalJump) {
       "function f() {"
       "  function p() {};"
       "  function q() {};"
-      "  if (a) g(q);"
+      "  if (a) q();"
       "  else g(p);"
       "  return p;"
       "};"
@@ -272,6 +276,48 @@ TEST(SerializeUnconditionalJump) {
       "var p = f();"
       "%EnsureFeedbackVectorForFunction(p);"
       "f(); return f;");
+}
+
+TEST(MergeJumpTargetEnvironment) {
+  CheckForSerializedInlinee(
+      "function f() {"
+      "  let g;"
+      "  while (true) {"
+      "    if (g === undefined) {g = ()=>1; break;} else {g = ()=>2; break};"
+      "  };"
+      "  g(); return g;"
+      "};"
+      "%EnsureFeedbackVectorForFunction(f);"
+      "%EnsureFeedbackVectorForFunction(f());"
+      "f(); return f;");  // Two calls to f to make g() megamorhpic.
+}
+
+TEST(BoundFunctionTarget) {
+  CheckForSerializedInlinee(
+      "function apply(foo, arg) { return foo(arg); };"
+      "%EnsureFeedbackVectorForFunction(apply);"
+      "function test() {"
+      "  const lambda = (a) => a;"
+      "  %EnsureFeedbackVectorForFunction(lambda);"
+      "  let bound = apply.bind(null, lambda).bind(null, 42);"
+      "  %TurbofanStaticAssert(bound() == 42); return apply;"
+      "};"
+      "%EnsureFeedbackVectorForFunction(test);"
+      "test(); return test;");
+}
+
+TEST(BoundFunctionArguments) {
+  CheckForSerializedInlinee(
+      "function apply(foo, arg) { return foo(arg); };"
+      "%EnsureFeedbackVectorForFunction(apply);"
+      "function test() {"
+      "  const lambda = (a) => a;"
+      "  %EnsureFeedbackVectorForFunction(lambda);"
+      "  let bound = apply.bind(null, lambda).bind(null, 42);"
+      "  %TurbofanStaticAssert(bound() == 42); return lambda;"
+      "};"
+      "%EnsureFeedbackVectorForFunction(test);"
+      "test(); return test;");
 }
 
 }  // namespace compiler

@@ -190,7 +190,9 @@ static void checkStackFrame(const char* expected_script_name,
   } else {
     CHECK_NOT_NULL(strstr(*script_name, expected_script_name));
   }
-  CHECK_NOT_NULL(strstr(*func_name, expected_func_name));
+  if (!frame->GetFunctionName().IsEmpty()) {
+    CHECK_NOT_NULL(strstr(*func_name, expected_func_name));
+  }
   CHECK_EQ(expected_line_number, frame->GetLineNumber());
   CHECK_EQ(expected_column, frame->GetColumn());
   CHECK_EQ(is_eval, frame->IsEval());
@@ -248,31 +250,31 @@ static void AnalyzeStackInNativeCode(
     v8::Local<v8::StackTrace> stackTrace = v8::StackTrace::CurrentStackTrace(
         args.GetIsolate(), 5, v8::StackTrace::kOverview);
     CHECK_EQ(3, stackTrace->GetFrameCount());
-    checkStackFrame(nullptr, "function.name", 3, 1, true, false,
+    checkStackFrame(nullptr, "function.name", 1, 1, true, false,
                     stackTrace->GetFrame(isolate, 0));
   } else if (testGroup == kDisplayName) {
     v8::Local<v8::StackTrace> stackTrace = v8::StackTrace::CurrentStackTrace(
         args.GetIsolate(), 5, v8::StackTrace::kOverview);
     CHECK_EQ(3, stackTrace->GetFrameCount());
-    checkStackFrame(nullptr, "function.displayName", 3, 1, true, false,
+    checkStackFrame(nullptr, "function.displayName", 1, 1, true, false,
                     stackTrace->GetFrame(isolate, 0));
   } else if (testGroup == kFunctionNameAndDisplayName) {
     v8::Local<v8::StackTrace> stackTrace = v8::StackTrace::CurrentStackTrace(
         args.GetIsolate(), 5, v8::StackTrace::kOverview);
     CHECK_EQ(3, stackTrace->GetFrameCount());
-    checkStackFrame(nullptr, "function.displayName", 3, 1, true, false,
+    checkStackFrame(nullptr, "function.displayName", 1, 1, true, false,
                     stackTrace->GetFrame(isolate, 0));
   } else if (testGroup == kDisplayNameIsNotString) {
     v8::Local<v8::StackTrace> stackTrace = v8::StackTrace::CurrentStackTrace(
         args.GetIsolate(), 5, v8::StackTrace::kOverview);
     CHECK_EQ(3, stackTrace->GetFrameCount());
-    checkStackFrame(nullptr, "function.name", 3, 1, true, false,
+    checkStackFrame(nullptr, "function.name", 1, 1, true, false,
                     stackTrace->GetFrame(isolate, 0));
   } else if (testGroup == kFunctionNameIsNotString) {
     v8::Local<v8::StackTrace> stackTrace = v8::StackTrace::CurrentStackTrace(
         args.GetIsolate(), 5, v8::StackTrace::kOverview);
     CHECK_EQ(3, stackTrace->GetFrameCount());
-    checkStackFrame(nullptr, "", 3, 1, true, false,
+    checkStackFrame(nullptr, "", 1, 1, true, false,
                     stackTrace->GetFrame(isolate, 0));
   }
 }

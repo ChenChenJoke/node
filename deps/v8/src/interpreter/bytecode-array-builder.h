@@ -127,9 +127,10 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final {
 
   // Keyed load property. The key should be in the accumulator.
   BytecodeArrayBuilder& LoadKeyedProperty(Register object, int feedback_slot);
+
   // Named load property of the @@iterator symbol.
-  BytecodeArrayBuilder& LoadIteratorProperty(Register object,
-                                             int feedback_slot);
+  BytecodeArrayBuilder& GetIterator(Register object, int feedback_slot);
+
   // Named load property of the @@asyncIterator symbol.
   BytecodeArrayBuilder& LoadAsyncIteratorProperty(Register object,
                                                   int feedback_slot);
@@ -418,6 +419,7 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final {
   BytecodeArrayBuilder& JumpIfNull(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfNotNull(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfUndefined(BytecodeLabel* label);
+  BytecodeArrayBuilder& JumpIfUndefinedOrNull(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfNotUndefined(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfNil(BytecodeLabel* label, Token::Value op,
                                   NilValue nil);

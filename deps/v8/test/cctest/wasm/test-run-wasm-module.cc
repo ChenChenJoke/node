@@ -28,6 +28,8 @@ namespace internal {
 namespace wasm {
 namespace test_run_wasm_module {
 
+using base::ReadLittleEndianValue;
+using base::WriteLittleEndianValue;
 using testing::CompileAndInstantiateForTesting;
 
 namespace {
@@ -41,7 +43,7 @@ void Cleanup(Isolate* isolate = CcTest::InitIsolateOnce()) {
 void TestModule(Zone* zone, WasmModuleBuilder* builder,
                 int32_t expected_result) {
   ZoneBuffer buffer(zone);
-  builder->WriteTo(buffer);
+  builder->WriteTo(&buffer);
 
   Isolate* isolate = CcTest::InitIsolateOnce();
   HandleScope scope(isolate);
@@ -53,7 +55,7 @@ void TestModule(Zone* zone, WasmModuleBuilder* builder,
 
 void TestModuleException(Zone* zone, WasmModuleBuilder* builder) {
   ZoneBuffer buffer(zone);
-  builder->WriteTo(buffer);
+  builder->WriteTo(&buffer);
 
   Isolate* isolate = CcTest::InitIsolateOnce();
   HandleScope scope(isolate);
@@ -115,7 +117,7 @@ TEST(Run_WasmModule_CompilationHintsLazy) {
 
     // Compile module. No function is actually compiled as the function is lazy.
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -176,7 +178,7 @@ TEST(Run_WasmModule_CompilationHintsNoTiering) {
 
     // Compile module.
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -222,7 +224,7 @@ TEST(Run_WasmModule_CompilationHintsTierUp) {
 
     // Compile module.
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -288,7 +290,7 @@ TEST(Run_WasmModule_CompilationHintsLazyBaselineEagerTopTier) {
 
     // Compile module.
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -427,8 +429,8 @@ TEST(Run_WasmModule_Global) {
     TestSignatures sigs;
 
     WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
-    uint32_t global1 = builder->AddGlobal(kWasmI32, false);
-    uint32_t global2 = builder->AddGlobal(kWasmI32, false);
+    uint32_t global1 = builder->AddGlobal(kWasmI32);
+    uint32_t global2 = builder->AddGlobal(kWasmI32);
     WasmFunctionBuilder* f1 = builder->AddFunction(sigs.i_v());
     byte code1[] = {
         WASM_I32_ADD(WASM_GET_GLOBAL(global1), WASM_GET_GLOBAL(global2))};
@@ -566,7 +568,7 @@ TEST(TestInterruptLoop) {
         WASM_I32V(121)};
     EMIT_CODE_WITH_END(f, code);
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
 
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -581,7 +583,7 @@ TEST(TestInterruptLoop) {
     int32_t* memory_array = reinterpret_cast<int32_t*>(memory->backing_store());
 
     InterruptThread thread(isolate, memory_array);
-    thread.Start();
+    CHECK(thread.Start());
     testing::RunWasmModuleForTesting(isolate, instance, 0, nullptr);
     Address address = reinterpret_cast<Address>(
         &memory_array[InterruptThread::interrupt_location_]);
@@ -650,7 +652,7 @@ TEST(Run_WasmModule_GrowMemOobFixedIndex) {
 
     HandleScope scope(isolate);
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     testing::SetupIsolateForWasmModule(isolate);
 
     ErrorThrower thrower(isolate, "Test");
@@ -697,7 +699,7 @@ TEST(Run_WasmModule_GrowMemOobVariableIndex) {
 
     HandleScope scope(isolate);
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     testing::SetupIsolateForWasmModule(isolate);
 
     ErrorThrower thrower(isolate, "Test");
@@ -743,9 +745,9 @@ TEST(Run_WasmModule_Global_init) {
 
     WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
     uint32_t global1 =
-        builder->AddGlobal(kWasmI32, false, false, WasmInitExpr(777777));
+        builder->AddGlobal(kWasmI32, false, WasmInitExpr(777777));
     uint32_t global2 =
-        builder->AddGlobal(kWasmI32, false, false, WasmInitExpr(222222));
+        builder->AddGlobal(kWasmI32, false, WasmInitExpr(222222));
     WasmFunctionBuilder* f1 = builder->AddFunction(sigs.i_v());
     byte code[] = {
         WASM_I32_ADD(WASM_GET_GLOBAL(global1), WASM_GET_GLOBAL(global2))};
@@ -771,12 +773,11 @@ static void RunWasmModuleGlobalInitTest(ValueType type, CType expected) {
       WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
 
       for (int i = 0; i < padding; i++) {  // pad global before
-        builder->AddGlobal(kWasmI32, false, false, WasmInitExpr(i + 20000));
+        builder->AddGlobal(kWasmI32, false, WasmInitExpr(i + 20000));
       }
-      uint32_t global =
-          builder->AddGlobal(type, false, false, WasmInitExpr(expected));
+      uint32_t global = builder->AddGlobal(type, false, WasmInitExpr(expected));
       for (int i = 0; i < padding; i++) {  // pad global after
-        builder->AddGlobal(kWasmI32, false, false, WasmInitExpr(i + 30000));
+        builder->AddGlobal(kWasmI32, false, WasmInitExpr(i + 30000));
       }
 
       WasmFunctionBuilder* f1 = builder->AddFunction(&sig);
@@ -909,6 +910,8 @@ TEST(EmptyMemoryEmptyDataSegment) {
 
 TEST(MemoryWithOOBEmptyDataSegment) {
   {
+    FlagScope<bool> no_bulk_memory(
+        &v8::internal::FLAG_experimental_wasm_bulk_memory, false);
     Isolate* isolate = CcTest::InitIsolateOnce();
     HandleScope scope(isolate);
     testing::SetupIsolateForWasmModule(isolate);
@@ -984,7 +987,7 @@ TEST(Run_WasmModule_Buffer_Externalized_GrowMem) {
     EMIT_CODE_WITH_END(f, code);
 
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     testing::SetupIsolateForWasmModule(isolate);
     ErrorThrower thrower(isolate, "Test");
     const Handle<WasmInstanceObject> instance =
@@ -1110,7 +1113,7 @@ TEST(AtomicOpDisassembly) {
 
     HandleScope scope(isolate);
     ZoneBuffer buffer(&zone);
-    builder->WriteTo(buffer);
+    builder->WriteTo(&buffer);
     testing::SetupIsolateForWasmModule(isolate);
 
     ErrorThrower thrower(isolate, "Test");

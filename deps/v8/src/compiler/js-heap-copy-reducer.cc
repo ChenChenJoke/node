@@ -30,8 +30,7 @@ Reduction JSHeapCopyReducer::Reduce(Node* node) {
       ObjectRef object(broker(), HeapConstantOf(node->op()));
       if (object.IsJSFunction()) object.AsJSFunction().Serialize();
       if (object.IsJSObject()) object.AsJSObject().SerializeObjectCreateMap();
-      if (object.IsModule()) object.AsModule().Serialize();
-      if (object.IsContext()) object.AsContext().SerializeContextChain();
+      if (object.IsSourceTextModule()) object.AsSourceTextModule().Serialize();
       break;
     }
     case IrOpcode::kJSCreateArray: {
@@ -48,7 +47,9 @@ Reduction JSHeapCopyReducer::Reduce(Node* node) {
       break;
     }
     case IrOpcode::kJSCreateBlockContext: {
-      ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      if (!FLAG_concurrent_inlining) {
+        ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      }
       break;
     }
     case IrOpcode::kJSCreateBoundFunction: {
@@ -58,7 +59,9 @@ Reduction JSHeapCopyReducer::Reduce(Node* node) {
       break;
     }
     case IrOpcode::kJSCreateCatchContext: {
-      ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      if (!FLAG_concurrent_inlining) {
+        ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      }
       break;
     }
     case IrOpcode::kJSCreateClosure: {
@@ -74,30 +77,42 @@ Reduction JSHeapCopyReducer::Reduce(Node* node) {
       break;
     }
     case IrOpcode::kJSCreateFunctionContext: {
-      CreateFunctionContextParameters const& p =
-          CreateFunctionContextParametersOf(node->op());
-      ScopeInfoRef(broker(), p.scope_info());
+      if (!FLAG_concurrent_inlining) {
+        CreateFunctionContextParameters const& p =
+            CreateFunctionContextParametersOf(node->op());
+        ScopeInfoRef(broker(), p.scope_info());
+      }
       break;
     }
     case IrOpcode::kJSCreateLiteralArray:
     case IrOpcode::kJSCreateLiteralObject: {
-      CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
-      FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      if (!FLAG_concurrent_inlining) {
+        CreateLiteralParameters const& p =
+            CreateLiteralParametersOf(node->op());
+        FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      }
       break;
     }
     case IrOpcode::kJSCreateLiteralRegExp: {
-      CreateLiteralParameters const& p = CreateLiteralParametersOf(node->op());
-      FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      if (!FLAG_concurrent_inlining) {
+        CreateLiteralParameters const& p =
+            CreateLiteralParametersOf(node->op());
+        FeedbackVectorRef(broker(), p.feedback().vector()).SerializeSlots();
+      }
       break;
     }
     case IrOpcode::kJSCreateWithContext: {
-      ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      if (!FLAG_concurrent_inlining) {
+        ScopeInfoRef(broker(), ScopeInfoOf(node->op()));
+      }
       break;
     }
     case IrOpcode::kJSLoadNamed:
     case IrOpcode::kJSStoreNamed: {
-      NamedAccess const& p = NamedAccessOf(node->op());
-      NameRef(broker(), p.name());
+      if (!FLAG_concurrent_inlining) {
+        NamedAccess const& p = NamedAccessOf(node->op());
+        NameRef(broker(), p.name());
+      }
       break;
     }
     case IrOpcode::kStoreField:

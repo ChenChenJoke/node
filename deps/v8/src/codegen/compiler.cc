@@ -15,8 +15,10 @@
 #include "src/codegen/assembler-inl.h"
 #include "src/codegen/compilation-cache.h"
 #include "src/codegen/optimized-compilation-info.h"
+#include "src/codegen/pending-optimization-table.h"
 #include "src/codegen/unoptimized-compilation-info.h"
 #include "src/common/globals.h"
+#include "src/common/message-template.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
 #include "src/compiler/pipeline.h"
@@ -24,7 +26,6 @@
 #include "src/debug/liveedit.h"
 #include "src/execution/frames-inl.h"
 #include "src/execution/isolate-inl.h"
-#include "src/execution/message-template.h"
 #include "src/execution/runtime-profiler.h"
 #include "src/execution/vm-state-inl.h"
 #include "src/heap/heap-inl.h"
@@ -319,6 +320,8 @@ void OptimizedCompilationJob::RecordCompilationStats(CompilationMode mode,
       counters->turbofan_optimize_total_foreground()->AddSample(
           static_cast<int>(time_foreground.InMicroseconds()));
     }
+    counters->turbofan_ticks()->AddSample(static_cast<int>(
+        compilation_info()->tick_counter().CurrentTicks() / 1000));
   }
 }
 
@@ -406,6 +409,12 @@ void InstallUnoptimizedCode(UnoptimizedCompilationInfo* compilation_info,
     DCHECK(!shared_info->HasBytecodeArray());  // Only compiled once.
     DCHECK(!compilation_info->has_asm_wasm_data());
     DCHECK(!shared_info->HasFeedbackMetadata());
+
+    // If the function failed asm-wasm compilation, mark asm_wasm as broken
+    // to ensure we don't try to compile as asm-wasm.
+    if (compilation_info->literal()->scope()->IsAsmModule()) {
+      shared_info->set_is_asm_wasm_broken(true);
+    }
 
     InstallBytecodeArray(compilation_info->bytecode_array(), shared_info,
                          parse_info, isolate);
@@ -591,6 +600,12 @@ MaybeHandle<SharedFunctionInfo> GenerateUnoptimizedCodeForToplevel(
         FinalizeUnoptimizedCompilationJob(job.get(), shared_info, isolate) ==
             CompilationJob::FAILED) {
       return MaybeHandle<SharedFunctionInfo>();
+    }
+
+    if (FLAG_stress_lazy_source_positions) {
+      // Collect source positions immediately to try and flush out bytecode
+      // mismatches.
+      SharedFunctionInfo::EnsureSourcePositionsAvailable(isolate, shared_info);
     }
 
     if (shared_info.is_identical_to(top_level)) {
@@ -797,18 +812,10 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
     return MaybeHandle<Code>();
   }
 
-  // If code was pending optimization for testing, delete remove the strong root
-  // that was preventing the bytecode from being flushed between marking and
-  // optimization.
-  if (!isolate->heap()->pending_optimize_for_test_bytecode().IsUndefined()) {
-    Handle<ObjectHashTable> table =
-        handle(ObjectHashTable::cast(
-                   isolate->heap()->pending_optimize_for_test_bytecode()),
-               isolate);
-    bool was_present;
-    table = table->Remove(isolate, table, handle(function->shared(), isolate),
-                          &was_present);
-    isolate->heap()->SetPendingOptimizeForTestBytecode(*table);
+  // If code was pending optimization for testing, delete remove the entry
+  // from the table that was preventing the bytecode from being flushed
+  if (V8_UNLIKELY(FLAG_testing_d8_test_runner)) {
+    PendingOptimizationTable::FunctionWasOptimized(isolate, function);
   }
 
   Handle<Code> cached_code;
@@ -1180,6 +1187,9 @@ bool Compiler::CollectSourcePositions(Isolate* isolate,
   DCHECK(shared_info->HasBytecodeArray());
   DCHECK(!shared_info->GetBytecodeArray().HasSourcePositionTable());
 
+  // Source position collection should be context independent.
+  NullContextScope null_context_scope(isolate);
+
   // Collecting source positions requires allocating a new source position
   // table.
   DCHECK(AllowHeapAllocation::IsAllowed());
@@ -1214,8 +1224,10 @@ bool Compiler::CollectSourcePositions(Isolate* isolate,
   parse_info.set_collect_source_positions();
   if (FLAG_allow_natives_syntax) parse_info.set_allow_natives_syntax();
 
-  // Parse and update ParseInfo with the results.
-  if (!parsing::ParseAny(&parse_info, shared_info, isolate)) {
+  // Parse and update ParseInfo with the results. Don't update parsing
+  // statistics since we've already parsed the code before.
+  if (!parsing::ParseAny(&parse_info, shared_info, isolate,
+                         parsing::ReportErrorsAndStatisticsMode::kNo)) {
     // Parsing failed probably as a result of stack exhaustion.
     bytecode->SetSourcePositionsFailedToCollect();
     return FailWithPendingException(
@@ -1346,6 +1358,13 @@ bool Compiler::Compile(Handle<SharedFunctionInfo> shared_info,
   DCHECK(!isolate->has_pending_exception());
   *is_compiled_scope = shared_info->is_compiled_scope();
   DCHECK(is_compiled_scope->is_compiled());
+
+  if (FLAG_stress_lazy_source_positions) {
+    // Collect source positions immediately to try and flush out bytecode
+    // mismatches.
+    SharedFunctionInfo::EnsureSourcePositionsAvailable(isolate, shared_info);
+  }
+
   return true;
 }
 
@@ -1599,33 +1618,103 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
   return result;
 }
 
-bool Compiler::CodeGenerationFromStringsAllowed(Isolate* isolate,
-                                                Handle<Context> context,
-                                                Handle<String> source) {
+// Check whether embedder allows code generation in this context.
+// (via v8::Isolate::SetAllowCodeGenerationFromStringsCallback)
+bool CodeGenerationFromStringsAllowed(Isolate* isolate, Handle<Context> context,
+                                      Handle<String> source) {
   DCHECK(context->allow_code_gen_from_strings().IsFalse(isolate));
-  // Check with callback if set.
+  DCHECK(isolate->allow_code_gen_callback());
+
+  // Callback set. Let it decide if code generation is allowed.
+  VMState<EXTERNAL> state(isolate);
+  RuntimeCallTimerScope timer(
+      isolate, RuntimeCallCounterId::kCodeGenerationFromStringsCallbacks);
   AllowCodeGenerationFromStringsCallback callback =
       isolate->allow_code_gen_callback();
-  if (callback == nullptr) {
-    // No callback set and code generation disallowed.
-    return false;
-  } else {
-    // Callback set. Let it decide if code generation is allowed.
-    VMState<EXTERNAL> state(isolate);
-    return callback(v8::Utils::ToLocal(context), v8::Utils::ToLocal(source));
-  }
+  return callback(v8::Utils::ToLocal(context), v8::Utils::ToLocal(source));
 }
 
-MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
-    Handle<Context> context, Handle<String> source,
+// Check whether embedder allows code generation in this context.
+// (via v8::Isolate::SetModifyCodeGenerationFromStringsCallback)
+bool ModifyCodeGenerationFromStrings(Isolate* isolate, Handle<Context> context,
+                                     Handle<i::Object>* source) {
+  DCHECK(context->allow_code_gen_from_strings().IsFalse(isolate));
+  DCHECK(isolate->modify_code_gen_callback());
+  DCHECK(source);
+
+  // Callback set. Run it, and use the return value as source, or block
+  // execution if it's not set.
+  VMState<EXTERNAL> state(isolate);
+  ModifyCodeGenerationFromStringsCallback modify_callback =
+      isolate->modify_code_gen_callback();
+  RuntimeCallTimerScope timer(
+      isolate, RuntimeCallCounterId::kCodeGenerationFromStringsCallbacks);
+  MaybeLocal<v8::String> modified_source =
+      modify_callback(v8::Utils::ToLocal(context), v8::Utils::ToLocal(*source));
+  if (modified_source.IsEmpty()) return false;
+
+  // Use the new source (which might be the same as the old source) and return.
+  *source = Utils::OpenHandle(*modified_source.ToLocalChecked(), false);
+  return true;
+}
+
+// Run Embedder-mandated checks before generating code from a string.
+//
+// Returns a string to be used for compilation, or a flag that an object type
+// was encountered that is neither a string, nor something the embedder knows
+// how to handle.
+//
+// Returns: (assuming: std::tie(source, unknown_object))
+// - !source.is_null(): compilation allowed, source contains the source string.
+// - unknown_object is true: compilation allowed, but we don't know how to
+//                           deal with source_object.
+// - source.is_null() && !unknown_object: compilation should be blocked.
+//
+// - !source_is_null() and unknown_object can't be true at the same time.
+std::pair<MaybeHandle<String>, bool> Compiler::ValidateDynamicCompilationSource(
+    Isolate* isolate, Handle<Context> context,
+    Handle<i::Object> source_object) {
+  Handle<String> source;
+  if (source_object->IsString()) source = Handle<String>::cast(source_object);
+
+  // Check if the context unconditionally allows code gen from strings.
+  // allow_code_gen_from_strings can be many things, so we'll always check
+  // against the 'false' literal, so that e.g. undefined and 'true' are treated
+  // the same.
+  if (!context->allow_code_gen_from_strings().IsFalse(isolate)) {
+    return {source, !source_object->IsString()};
+  }
+
+  // Check if the context allows code generation for this string.
+  // allow_code_gen_callback only allows proper strings.
+  // (I.e., let allow_code_gen_callback decide, if it has been set.)
+  if (isolate->allow_code_gen_callback()) {
+    if (source_object->IsString() &&
+        CodeGenerationFromStringsAllowed(isolate, context, source)) {
+      return {source, !source_object->IsString()};
+    }
+  }
+
+  // Check if the context wants to block or modify this source object.
+  // Double-check that we really have a string now.
+  // (Let modify_code_gen_callback decide, if it's been set.)
+  if (isolate->modify_code_gen_callback()) {
+    if (ModifyCodeGenerationFromStrings(isolate, context, &source_object) &&
+        source_object->IsString())
+      return {Handle<String>::cast(source_object), false};
+  }
+
+  return {MaybeHandle<String>(), !source_object->IsString()};
+}
+
+MaybeHandle<JSFunction> Compiler::GetFunctionFromValidatedString(
+    Handle<Context> context, MaybeHandle<String> source,
     ParseRestriction restriction, int parameters_end_pos) {
   Isolate* const isolate = context->GetIsolate();
   Handle<Context> native_context(context->native_context(), isolate);
 
-  // Check if native context allows code generation from
-  // strings. Throw an exception if it doesn't.
-  if (native_context->allow_code_gen_from_strings().IsFalse(isolate) &&
-      !CodeGenerationFromStringsAllowed(isolate, native_context, source)) {
+  // Raise an EvalError if we did not receive a string.
+  if (source.is_null()) {
     Handle<Object> error_message =
         native_context->ErrorMessageForCodeGenerationFromStrings();
     THROW_NEW_ERROR(
@@ -1639,9 +1728,20 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
   int eval_position = kNoSourcePosition;
   Handle<SharedFunctionInfo> outer_info(
       native_context->empty_function().shared(), isolate);
-  return Compiler::GetFunctionFromEval(
-      source, outer_info, native_context, LanguageMode::kSloppy, restriction,
-      parameters_end_pos, eval_scope_position, eval_position);
+  return Compiler::GetFunctionFromEval(source.ToHandleChecked(), outer_info,
+                                       native_context, LanguageMode::kSloppy,
+                                       restriction, parameters_end_pos,
+                                       eval_scope_position, eval_position);
+}
+
+MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
+    Handle<Context> context, Handle<Object> source,
+    ParseRestriction restriction, int parameters_end_pos) {
+  Isolate* const isolate = context->GetIsolate();
+  Handle<Context> native_context(context->native_context(), isolate);
+  return GetFunctionFromValidatedString(
+      context, ValidateDynamicCompilationSource(isolate, context, source).first,
+      restriction, parameters_end_pos);
 }
 
 namespace {
@@ -2022,6 +2122,10 @@ MaybeHandle<JSFunction> Compiler::GetWrappedFunction(
 
     parse_info.set_eval();  // Use an eval scope as declaration scope.
     parse_info.set_wrapped_as_function();
+    // TODO(delphick): Remove this and instead make the wrapped and wrapper
+    // functions fully non-lazy instead thus preventing source positions from
+    // being omitted.
+    parse_info.set_collect_source_positions(true);
     // parse_info.set_eager(compile_options == ScriptCompiler::kEagerCompile);
     if (!context->IsNativeContext()) {
       parse_info.set_outer_scope_info(handle(context->scope_info(), isolate));
@@ -2128,7 +2232,28 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfo(
 
   // If we found an existing shared function info, return it.
   Handle<SharedFunctionInfo> existing;
-  if (maybe_existing.ToHandle(&existing)) return existing;
+  if (maybe_existing.ToHandle(&existing)) {
+    // If the function has been uncompiled (bytecode flushed) it will have lost
+    // any preparsed data. If we produced preparsed data during this compile for
+    // this function, replace the uncompiled data with one that includes it.
+    if (literal->produced_preparse_data() != nullptr &&
+        existing->HasUncompiledDataWithoutPreparseData()) {
+      DCHECK(literal->inferred_name()->Equals(
+          existing->uncompiled_data().inferred_name()));
+      DCHECK_EQ(literal->start_position(),
+                existing->uncompiled_data().start_position());
+      DCHECK_EQ(literal->end_position(),
+                existing->uncompiled_data().end_position());
+      Handle<PreparseData> preparse_data =
+          literal->produced_preparse_data()->Serialize(isolate);
+      Handle<UncompiledData> new_uncompiled_data =
+          isolate->factory()->NewUncompiledDataWithPreparseData(
+              literal->inferred_name(), literal->start_position(),
+              literal->end_position(), preparse_data);
+      existing->set_uncompiled_data(*new_uncompiled_data);
+    }
+    return existing;
+  }
 
   // Allocate a shared function info object which will be compiled lazily.
   Handle<SharedFunctionInfo> result =
@@ -2205,8 +2330,7 @@ bool Compiler::FinalizeOptimizedCompilationJob(OptimizedCompilationJob* job,
   return CompilationJob::FAILED;
 }
 
-void Compiler::PostInstantiation(Handle<JSFunction> function,
-                                 AllocationType allocation) {
+void Compiler::PostInstantiation(Handle<JSFunction> function) {
   Isolate* isolate = function->GetIsolate();
   Handle<SharedFunctionInfo> shared(function->shared(), isolate);
   IsCompiledScope is_compiled_scope(shared->is_compiled_scope());

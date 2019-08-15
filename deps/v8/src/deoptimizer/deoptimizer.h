@@ -16,7 +16,6 @@
 #include "src/deoptimizer/deoptimize-reason.h"
 #include "src/diagnostics/code-tracer.h"
 #include "src/execution/frame-constants.h"
-#include "src/execution/frames.h"
 #include "src/execution/isolate.h"
 #include "src/objects/feedback-vector.h"
 #include "src/objects/shared-function-info.h"
@@ -28,8 +27,10 @@ namespace v8 {
 namespace internal {
 
 class FrameDescription;
+class JavaScriptFrame;
 class TranslationIterator;
 class DeoptimizedFrameInfo;
+class TranslatedFrame;
 class TranslatedState;
 class RegisterValues;
 class MacroAssembler;
@@ -340,6 +341,7 @@ class TranslatedState {
   int CreateNextTranslatedValue(int frame_index, TranslationIterator* iterator,
                                 FixedArray literal_array, Address fp,
                                 RegisterValues* registers, FILE* trace_file);
+  Address DecompressIfNeeded(intptr_t value);
   Address ComputeArgumentsPosition(Address input_frame_pointer,
                                    CreateArgumentsType type, int* length);
   void CreateArgumentsElementsTranslatedValues(int frame_index,
@@ -499,6 +501,22 @@ class Deoptimizer : public Malloced {
 
   static const int kMaxNumberOfEntries = 16384;
 
+  // Set to true when the architecture supports deoptimization exit sequences
+  // of a fixed size, that can be sorted so that the deoptimization index is
+  // deduced from the address of the deoptimization exit.
+  static const bool kSupportsFixedDeoptExitSize;
+
+  // Size of deoptimization exit sequence. This is only meaningful when
+  // kSupportsFixedDeoptExitSize is true.
+  static const int kDeoptExitSize;
+
+  enum class BuiltinContinuationMode {
+    STUB,
+    JAVASCRIPT,
+    JAVASCRIPT_WITH_CATCH,
+    JAVASCRIPT_HANDLE_EXCEPTION
+  };
+
  private:
   friend class FrameWriter;
   void QueueValueForMaterialization(Address output_address, Object obj,
@@ -521,16 +539,8 @@ class Deoptimizer : public Malloced {
   void DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
                                    int frame_index);
 
-  enum class BuiltinContinuationMode {
-    STUB,
-    JAVASCRIPT,
-    JAVASCRIPT_WITH_CATCH,
-    JAVASCRIPT_HANDLE_EXCEPTION
-  };
   static bool BuiltinContinuationModeIsWithCatch(BuiltinContinuationMode mode);
   static bool BuiltinContinuationModeIsJavaScript(BuiltinContinuationMode mode);
-  static StackFrame::Type BuiltinContinuationModeToFrameType(
-      BuiltinContinuationMode mode);
   static Builtins::Name TrampolineForBuiltinContinuation(
       BuiltinContinuationMode mode, bool must_handle_result);
 
@@ -549,11 +559,8 @@ class Deoptimizer : public Malloced {
                                             Isolate* isolate,
                                             DeoptimizeKind kind);
 
-  // Marks all the code in the given context for deoptimization.
-  static void MarkAllCodeForContext(Context native_context);
-
-  // Deoptimizes all code marked in the given context.
-  static void DeoptimizeMarkedCodeForContext(Context native_context);
+  static void MarkAllCodeForContext(NativeContext native_context);
+  static void DeoptimizeMarkedCodeForContext(NativeContext native_context);
 
   // Some architectures need to push padding together with the TOS register
   // in order to maintain stack alignment.
@@ -628,10 +635,7 @@ class RegisterValues {
     return registers_[n];
   }
 
-  Float32 GetFloatRegister(unsigned n) const {
-    DCHECK(n < arraysize(float_registers_));
-    return float_registers_[n];
-  }
+  Float32 GetFloatRegister(unsigned n) const;
 
   Float64 GetDoubleRegister(unsigned n) const {
     DCHECK(n < arraysize(double_registers_));
@@ -643,23 +647,10 @@ class RegisterValues {
     registers_[n] = value;
   }
 
-  void SetFloatRegister(unsigned n, Float32 value) {
-    DCHECK(n < arraysize(float_registers_));
-    float_registers_[n] = value;
-  }
-
-  void SetDoubleRegister(unsigned n, Float64 value) {
-    DCHECK(n < arraysize(double_registers_));
-    double_registers_[n] = value;
-  }
-
-  // Generated code is writing directly into the below arrays, make sure their
-  // element sizes fit what the machine instructions expect.
-  static_assert(sizeof(Float32) == kFloatSize, "size mismatch");
-  static_assert(sizeof(Float64) == kDoubleSize, "size mismatch");
-
   intptr_t registers_[Register::kNumRegisters];
-  Float32 float_registers_[FloatRegister::kNumRegisters];
+  // Generated code writes directly into the following array, make sure the
+  // element size matches what the machine instructions expect.
+  static_assert(sizeof(Float64) == kDoubleSize, "size mismatch");
   Float64 double_registers_[DoubleRegister::kNumRegisters];
 };
 
@@ -723,10 +714,6 @@ class FrameDescription {
     register_values_.SetRegister(n, value);
   }
 
-  void SetDoubleRegister(unsigned n, Float64 value) {
-    register_values_.SetDoubleRegister(n, value);
-  }
-
   intptr_t GetTop() const { return top_; }
   void SetTop(intptr_t top) { top_ = top; }
 
@@ -755,10 +742,6 @@ class FrameDescription {
 
   static int double_registers_offset() {
     return OFFSET_OF(FrameDescription, register_values_.double_registers_);
-  }
-
-  static int float_registers_offset() {
-    return OFFSET_OF(FrameDescription, register_values_.float_registers_);
   }
 
   static int frame_size_offset() {

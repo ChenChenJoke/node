@@ -46,24 +46,22 @@ class WasmBuiltinsAssembler : public CodeStubAssembler {
   }
 
   TNode<Code> LoadCEntryFromInstance(TNode<Object> instance) {
-    return UncheckedCast<Code>(
-        Load(MachineType::AnyTagged(), instance,
-             IntPtrConstant(WasmInstanceObject::kCEntryStubOffset -
+    TNode<IntPtrT> isolate_root = UncheckedCast<IntPtrT>(
+        Load(MachineType::Pointer(), instance,
+             IntPtrConstant(WasmInstanceObject::kIsolateRootOffset -
                             kHeapObjectTag)));
+    auto centry_id =
+        Builtins::kCEntry_Return1_DontSaveFPRegs_ArgvOnStack_NoBuiltinExit;
+    TNode<Code> target = UncheckedCast<Code>(
+        Load(MachineType::TaggedPointer(), isolate_root,
+             IntPtrConstant(IsolateData::builtin_slot_offset(centry_id))));
+    return target;
   }
 };
 
 TF_BUILTIN(WasmAllocateHeapNumber, WasmBuiltinsAssembler) {
   TNode<Code> target = LoadBuiltinFromFrame(Builtins::kAllocateHeapNumber);
   TailCallStub(AllocateHeapNumberDescriptor(), target, NoContextConstant());
-}
-
-TF_BUILTIN(WasmCallJavaScript, WasmBuiltinsAssembler) {
-  TNode<Object> context = UncheckedParameter(Descriptor::kContext);
-  TNode<Object> function = UncheckedParameter(Descriptor::kFunction);
-  TNode<Object> argc = UncheckedParameter(Descriptor::kActualArgumentsCount);
-  TNode<Code> target = LoadBuiltinFromFrame(Builtins::kCall_ReceiverIsAny);
-  TailCallStub(CallTrampolineDescriptor{}, target, context, function, argc);
 }
 
 TF_BUILTIN(WasmRecordWrite, WasmBuiltinsAssembler) {

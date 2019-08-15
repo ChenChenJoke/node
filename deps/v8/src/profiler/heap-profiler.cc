@@ -151,6 +151,17 @@ SnapshotObjectId HeapProfiler::GetSnapshotObjectId(Handle<Object> obj) {
   return ids_->FindEntry(HeapObject::cast(*obj).address());
 }
 
+SnapshotObjectId HeapProfiler::GetSnapshotObjectId(NativeObject obj) {
+  // Try to find id of regular native node first.
+  SnapshotObjectId id = ids_->FindEntry(reinterpret_cast<Address>(obj));
+  // In case no id has been found, check whether there exists an entry where the
+  // native objects has been merged into a V8 entry.
+  if (id == v8::HeapProfiler::kUnknownObjectId) {
+    id = ids_->FindMergedNativeEntry(obj);
+  }
+  return id;
+}
+
 void HeapProfiler::ObjectMoveEvent(Address from, Address to, int size) {
   base::MutexGuard guard(&profiler_mutex_);
   bool known_object = ids_->MoveObject(from, to, size);
@@ -173,7 +184,8 @@ void HeapProfiler::UpdateObjectSizeEvent(Address addr, int size) {
 
 Handle<HeapObject> HeapProfiler::FindHeapObjectById(SnapshotObjectId id) {
   HeapObject object;
-  CombinedHeapIterator iterator(heap(), HeapIterator::kFilterUnreachable);
+  CombinedHeapObjectIterator iterator(heap(),
+                                      HeapObjectIterator::kFilterUnreachable);
   // Make sure that object with the given id is still reachable.
   for (HeapObject obj = iterator.Next(); !obj.is_null();
        obj = iterator.Next()) {
@@ -202,10 +214,21 @@ Isolate* HeapProfiler::isolate() const { return heap()->isolate(); }
 void HeapProfiler::QueryObjects(Handle<Context> context,
                                 debug::QueryObjectPredicate* predicate,
                                 PersistentValueVector<v8::Object>* objects) {
+  {
+    CombinedHeapObjectIterator function_heap_iterator(
+        heap(), HeapObjectIterator::kFilterUnreachable);
+    for (HeapObject heap_obj = function_heap_iterator.Next();
+         !heap_obj.is_null(); heap_obj = function_heap_iterator.Next()) {
+      if (heap_obj.IsFeedbackVector()) {
+        FeedbackVector::cast(heap_obj).ClearSlots(isolate());
+      }
+    }
+  }
   // We should return accurate information about live objects, so we need to
   // collect all garbage first.
   heap()->CollectAllAvailableGarbage(GarbageCollectionReason::kHeapProfiler);
-  CombinedHeapIterator heap_iterator(heap());
+  CombinedHeapObjectIterator heap_iterator(
+      heap(), HeapObjectIterator::kFilterUnreachable);
   for (HeapObject heap_obj = heap_iterator.Next(); !heap_obj.is_null();
        heap_obj = heap_iterator.Next()) {
     if (!heap_obj.IsJSObject() || heap_obj.IsExternal(isolate())) continue;

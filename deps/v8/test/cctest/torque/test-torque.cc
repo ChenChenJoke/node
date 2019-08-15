@@ -19,7 +19,6 @@
 #include "src/strings/char-predicates.h"
 #include "test/cctest/compiler/code-assembler-tester.h"
 #include "test/cctest/compiler/function-tester.h"
-#include "torque-generated/builtins-test-gen-tq.h"
 
 namespace v8 {
 namespace internal {
@@ -497,6 +496,110 @@ TEST(TestStaticAssert) {
   }
   FunctionTester ft(asm_tester.GenerateCode(), 0);
   ft.Call();
+}
+
+TEST(TestLoadEliminationFixed) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  Handle<Context> context =
+      Utils::OpenHandle(*v8::Isolate::GetCurrent()->GetCurrentContext());
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.TestLoadEliminationFixed(
+        m.UncheckedCast<Context>(m.HeapConstant(context)));
+    m.Return(m.UndefinedConstant());
+  }
+  asm_tester.GenerateCode();
+}
+
+TEST(TestLoadEliminationVariable) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  Handle<Context> context =
+      Utils::OpenHandle(*v8::Isolate::GetCurrent()->GetCurrentContext());
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.TestLoadEliminationVariable(
+        m.UncheckedCast<Context>(m.HeapConstant(context)));
+    m.Return(m.UndefinedConstant());
+  }
+  asm_tester.GenerateCode();
+}
+
+TEST(TestRedundantArrayElementCheck) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  Handle<Context> context =
+      Utils::OpenHandle(*v8::Isolate::GetCurrent()->GetCurrentContext());
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.Return(m.TestRedundantArrayElementCheck(
+        m.UncheckedCast<Context>(m.HeapConstant(context))));
+  }
+  asm_tester.GenerateCode();
+}
+
+TEST(TestRedundantSmiCheck) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  Handle<Context> context =
+      Utils::OpenHandle(*v8::Isolate::GetCurrent()->GetCurrentContext());
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.Return(m.TestRedundantSmiCheck(
+        m.UncheckedCast<Context>(m.HeapConstant(context))));
+  }
+  asm_tester.GenerateCode();
+}
+
+TEST(TestGenericStruct1) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.TestGenericStruct1();
+    m.Return(m.UndefinedConstant());
+  }
+  FunctionTester ft(asm_tester.GenerateCode(), 0);
+  ft.Call();
+}
+
+TEST(TestGenericStruct2) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  CodeAssemblerTester asm_tester(isolate);
+  TestTorqueAssembler m(asm_tester.state());
+  { m.Return(m.TestGenericStruct2().snd.fst); }
+  FunctionTester ft(asm_tester.GenerateCode(), 0);
+  ft.Call();
+}
+
+TEST(TestBranchOnBoolOptimization) {
+  CcTest::InitializeVM();
+  Isolate* isolate(CcTest::i_isolate());
+  i::HandleScope scope(isolate);
+  Handle<Context> context =
+      Utils::OpenHandle(*v8::Isolate::GetCurrent()->GetCurrentContext());
+  CodeAssemblerTester asm_tester(isolate, 1);
+  TestTorqueAssembler m(asm_tester.state());
+  {
+    m.TestBranchOnBoolOptimization(
+        m.UncheckedCast<Context>(m.HeapConstant(context)),
+        m.UncheckedCast<Smi>(m.Parameter(0)));
+    m.Return(m.UndefinedConstant());
+  }
+  asm_tester.GenerateCode();
 }
 
 }  // namespace compiler

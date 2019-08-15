@@ -4,7 +4,7 @@
 
 #include 'src/builtins/builtins-regexp-gen.h'
 
-namespace regexp_replace {
+namespace regexp {
 
   extern builtin
   StringIndexOf(implicit context: Context)(String, String, Smi): Smi;
@@ -22,11 +22,7 @@ namespace regexp_replace {
       String, JSRegExp, Callable): String;
 
   extern macro
-  RegExpBuiltinsAssembler::AdvanceStringIndexFast(String, Number, bool): Smi;
-  extern macro
-  RegExpBuiltinsAssembler::RegExpPrototypeExecBodyWithoutResultFast(
-      implicit context: Context)(JSReceiver, String):
-      RegExpMatchInfo labels IfDidNotMatch;
+  RegExpBuiltinsAssembler::AdvanceStringIndexFast(String, Smi, bool): Smi;
 
   transitioning macro RegExpReplaceCallableNoExplicitCaptures(implicit context:
                                                                   Context)(
@@ -72,8 +68,7 @@ namespace regexp_replace {
 
   transitioning macro
   RegExpReplaceCallableWithExplicitCaptures(implicit context: Context)(
-      matchesElements: FixedArray, matchesLength: intptr, string: String,
-      replaceFn: Callable) {
+      matchesElements: FixedArray, matchesLength: intptr, replaceFn: Callable) {
     for (let i: intptr = 0; i < matchesLength; i++) {
       const elArray =
           Cast<JSArray>(matchesElements.objects[i]) otherwise continue;
@@ -124,7 +119,7 @@ namespace regexp_replace {
           matchesElements, matchesLengthInt, string, replaceFn);
     } else {
       RegExpReplaceCallableWithExplicitCaptures(
-          matchesElements, matchesLengthInt, string, replaceFn);
+          matchesElements, matchesLengthInt, replaceFn);
     }
 
     return StringBuilderConcat(matches, matchesLength, string);
@@ -138,7 +133,7 @@ namespace regexp_replace {
     let result: String = kEmptyString;
     let lastMatchEnd: Smi = 0;
     let unicode: bool = false;
-    let replaceLength: Smi = replaceString.length_smi;
+    const replaceLength: Smi = replaceString.length_smi;
     const global: bool = regexp.global;
 
     if (global) {
@@ -147,8 +142,9 @@ namespace regexp_replace {
     }
 
     while (true) {
-      const match: RegExpMatchInfo = RegExpPrototypeExecBodyWithoutResultFast(
-          regexp, string) otherwise break;
+      const match: RegExpMatchInfo =
+          regexp::RegExpPrototypeExecBodyWithoutResultFast(regexp, string)
+          otherwise break;
       const matchStart: Smi = match.GetStartOfCapture(0);
       const matchEnd: Smi = match.GetEndOfCapture(0);
 
@@ -209,7 +205,7 @@ namespace regexp_replace {
   }
 
   transitioning javascript builtin RegExpPrototypeReplace(
-      context: Context, receiver: Object, ...arguments): Object {
+      js-implicit context: Context, receiver: Object)(...arguments): Object {
     const methodName: constexpr string = 'RegExp.prototype.@@replace';
 
     // RegExpPrototypeReplace is a bit of a beast - a summary of dispatch logic:

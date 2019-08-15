@@ -94,6 +94,7 @@ namespace internal {
   V(ImportCallExpression)       \
   V(Literal)                    \
   V(NativeFunctionLiteral)      \
+  V(OptionalChain)              \
   V(Property)                   \
   V(ResolvedProperty)           \
   V(Spread)                     \
@@ -147,7 +148,6 @@ class AstNode: public ZoneObject {
   int position() const { return position_; }
 
 #ifdef DEBUG
-  void Print();
   void Print(Isolate* isolate);
 #endif  // DEBUG
 
@@ -169,11 +169,13 @@ class AstNode: public ZoneObject {
   void* operator new(size_t size);
 
   int position_;
-  class NodeTypeField : public BitField<NodeType, 0, 6> {};
+  using NodeTypeField = BitField<NodeType, 0, 6>;
 
  protected:
   uint32_t bit_field_;
-  static const uint8_t kNextBitFieldIndex = NodeTypeField::kNext;
+
+  template <class T, int size>
+  using NextBitField = NodeTypeField::Next<T, size>;
 
   AstNode(int position, NodeType type)
       : position_(position), bit_field_(NodeTypeField::encode(type)) {}
@@ -183,8 +185,6 @@ class AstNode: public ZoneObject {
 class Statement : public AstNode {
  protected:
   Statement(int position, NodeType type) : AstNode(position, type) {}
-
-  static const uint8_t kNextBitFieldIndex = AstNode::kNextBitFieldIndex;
 };
 
 
@@ -204,6 +204,9 @@ class Expression : public AstNode {
 
   // True iff the expression is a valid reference expression.
   bool IsValidReferenceExpression() const;
+
+  // True iff the expression is a private name.
+  bool IsPrivateName() const;
 
   // Helpers for ToBoolean conversion.
   bool ToBooleanIsTrue() const;
@@ -263,15 +266,15 @@ class Expression : public AstNode {
   }
 
  private:
-  class IsParenthesizedField
-      : public BitField<bool, AstNode::kNextBitFieldIndex, 1> {};
+  using IsParenthesizedField = AstNode::NextBitField<bool, 1>;
 
  protected:
   Expression(int pos, NodeType type) : AstNode(pos, type) {
     DCHECK(!is_parenthesized());
   }
 
-  static const uint8_t kNextBitFieldIndex = IsParenthesizedField::kNext;
+  template <class T, int size>
+  using NextBitField = IsParenthesizedField::Next<T, size>;
 };
 
 class FailureExpression : public Expression {
@@ -319,8 +322,7 @@ class BreakableStatement : public Statement {
   }
 
  private:
-  class BreakableTypeField
-      : public BitField<BreakableType, Statement::kNextBitFieldIndex, 1> {};
+  using BreakableTypeField = Statement::NextBitField<BreakableType, 1>;
 
  protected:
   BreakableStatement(BreakableType breakable_type, int position, NodeType type)
@@ -328,7 +330,8 @@ class BreakableStatement : public Statement {
     bit_field_ |= BreakableTypeField::encode(breakable_type);
   }
 
-  static const uint8_t kNextBitFieldIndex = BreakableTypeField::kNext;
+  template <class T, int size>
+  using NextBitField = BreakableTypeField::Next<T, size>;
 };
 
 class Block : public BreakableStatement {
@@ -355,10 +358,8 @@ class Block : public BreakableStatement {
   ZonePtrList<Statement> statements_;
   Scope* scope_;
 
-  class IgnoreCompletionField
-      : public BitField<bool, BreakableStatement::kNextBitFieldIndex, 1> {};
-  class IsLabeledField
-      : public BitField<bool, IgnoreCompletionField::kNext, 1> {};
+  using IgnoreCompletionField = BreakableStatement::NextBitField<bool, 1>;
+  using IsLabeledField = IgnoreCompletionField::Next<bool, 1>;
 
  protected:
   Block(Zone* zone, ZonePtrList<const AstRawString>* labels, int capacity,
@@ -446,8 +447,7 @@ class VariableDeclaration : public Declaration {
  private:
   friend class AstNodeFactory;
 
-  class IsNestedField
-      : public BitField<bool, Declaration::kNextBitFieldIndex, 1> {};
+  using IsNestedField = Declaration::NextBitField<bool, 1>;
 
  protected:
   explicit VariableDeclaration(int pos, bool is_nested = false)
@@ -455,7 +455,8 @@ class VariableDeclaration : public Declaration {
     bit_field_ = IsNestedField::update(bit_field_, is_nested);
   }
 
-  static const uint8_t kNextBitFieldIndex = IsNestedField::kNext;
+  template <class T, int size>
+  using NextBitField = IsNestedField::Next<T, size>;
 };
 
 // For var declarations that appear in a block scope.
@@ -521,9 +522,6 @@ class IterationStatement : public BreakableStatement {
         own_labels_(own_labels),
         body_(nullptr) {}
   void Initialize(Statement* body) { body_ = body; }
-
-  static const uint8_t kNextBitFieldIndex =
-      BreakableStatement::kNextBitFieldIndex;
 
  private:
   ZonePtrList<const AstRawString>* labels_;
@@ -738,8 +736,7 @@ class ReturnStatement final : public JumpStatement {
   Expression* expression_;
   int end_position_;
 
-  class TypeField
-      : public BitField<Type, JumpStatement::kNextBitFieldIndex, 1> {};
+  using TypeField = JumpStatement::NextBitField<Type, 1>;
 };
 
 
@@ -975,8 +972,7 @@ class SloppyBlockFunctionStatement final : public Statement {
  private:
   friend class AstNodeFactory;
 
-  class TokenField
-      : public BitField<Token::Value, Statement::kNextBitFieldIndex, 8> {};
+  using TokenField = Statement::NextBitField<Token::Value, 8>;
 
   SloppyBlockFunctionStatement(int pos, Variable* var, Token::Value init,
                                Statement* statement)
@@ -1077,7 +1073,7 @@ class Literal final : public Expression {
  private:
   friend class AstNodeFactory;
 
-  class TypeField : public BitField<Type, Expression::kNextBitFieldIndex, 4> {};
+  using TypeField = Expression::NextBitField<Type, 4>;
 
   Literal(int smi, int position) : Expression(position, kLiteral), smi_(smi) {
     bit_field_ = TypeField::update(bit_field_, kSmi);
@@ -1208,10 +1204,9 @@ class AggregateLiteral : public MaterializedLiteral {
 
  private:
   int depth_ : 31;
-  class NeedsInitialAllocationSiteField
-      : public BitField<bool, MaterializedLiteral::kNextBitFieldIndex, 1> {};
-  class IsSimpleField
-      : public BitField<bool, NeedsInitialAllocationSiteField::kNext, 1> {};
+  using NeedsInitialAllocationSiteField =
+      MaterializedLiteral::NextBitField<bool, 1>;
+  using IsSimpleField = NeedsInitialAllocationSiteField::Next<bool, 1>;
 
  protected:
   friend class AstNodeFactory;
@@ -1234,7 +1229,8 @@ class AggregateLiteral : public MaterializedLiteral {
     bit_field_ = NeedsInitialAllocationSiteField::update(bit_field_, required);
   }
 
-  static const uint8_t kNextBitFieldIndex = IsSimpleField::kNext;
+  template <class T, int size>
+  using NextBitField = IsSimpleField::Next<T, size>;
 };
 
 // Common supertype for ObjectLiteralProperty and ClassLiteralProperty
@@ -1411,41 +1407,11 @@ class ObjectLiteral final : public AggregateLiteral {
   Handle<ObjectBoilerplateDescription> boilerplate_description_;
   ZoneList<Property*> properties_;
 
-  class HasElementsField
-      : public BitField<bool, AggregateLiteral::kNextBitFieldIndex, 1> {};
-  class HasRestPropertyField
-      : public BitField<bool, HasElementsField::kNext, 1> {};
-  class FastElementsField
-      : public BitField<bool, HasRestPropertyField::kNext, 1> {};
-  class HasNullPrototypeField
-      : public BitField<bool, FastElementsField::kNext, 1> {};
+  using HasElementsField = AggregateLiteral::NextBitField<bool, 1>;
+  using HasRestPropertyField = HasElementsField::Next<bool, 1>;
+  using FastElementsField = HasRestPropertyField::Next<bool, 1>;
+  using HasNullPrototypeField = FastElementsField::Next<bool, 1>;
 };
-
-
-// A map from property names to getter/setter pairs allocated in the zone.
-class AccessorTable
-    : public base::TemplateHashMap<Literal, ObjectLiteral::Accessors,
-                                   bool (*)(void*, void*),
-                                   ZoneAllocationPolicy> {
- public:
-  explicit AccessorTable(Zone* zone)
-      : base::TemplateHashMap<Literal, ObjectLiteral::Accessors,
-                              bool (*)(void*, void*), ZoneAllocationPolicy>(
-            Literal::Match, ZoneAllocationPolicy(zone)),
-        zone_(zone) {}
-
-  Iterator lookup(Literal* literal) {
-    Iterator it = find(literal, true, ZoneAllocationPolicy(zone_));
-    if (it->second == nullptr) {
-      it->second = new (zone_) ObjectLiteral::Accessors();
-    }
-    return it;
-  }
-
- private:
-  Zone* zone_;
-};
-
 
 // An array literal has a literals object that is used
 // for minimizing the work when constructing it at runtime.
@@ -1533,8 +1499,11 @@ class VariableProxy final : public Expression {
   void set_is_assigned() {
     bit_field_ = IsAssignedField::update(bit_field_, true);
     if (is_resolved()) {
-      var()->set_maybe_assigned();
+      var()->SetMaybeAssigned();
     }
+  }
+  void clear_is_assigned() {
+    bit_field_ = IsAssignedField::update(bit_field_, false);
   }
 
   bool is_resolved() const { return IsResolvedField::decode(bit_field_); }
@@ -1610,15 +1579,11 @@ class VariableProxy final : public Expression {
 
   explicit VariableProxy(const VariableProxy* copy_from);
 
-  class IsAssignedField
-      : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
-  class IsResolvedField : public BitField<bool, IsAssignedField::kNext, 1> {};
-  class IsRemovedFromUnresolvedField
-      : public BitField<bool, IsResolvedField::kNext, 1> {};
-  class IsNewTargetField
-      : public BitField<bool, IsRemovedFromUnresolvedField::kNext, 1> {};
-  class HoleCheckModeField
-      : public BitField<HoleCheckMode, IsNewTargetField::kNext, 1> {};
+  using IsAssignedField = Expression::NextBitField<bool, 1>;
+  using IsResolvedField = IsAssignedField::Next<bool, 1>;
+  using IsRemovedFromUnresolvedField = IsResolvedField::Next<bool, 1>;
+  using IsNewTargetField = IsRemovedFromUnresolvedField::Next<bool, 1>;
+  using HoleCheckModeField = IsNewTargetField::Next<HoleCheckMode, 1>;
 
   union {
     const AstRawString* raw_name_;  // if !is_resolved_
@@ -1631,29 +1596,73 @@ class VariableProxy final : public Expression {
   friend base::ThreadedListTraits<VariableProxy>;
 };
 
+// Wraps an optional chain to provide a wrapper for jump labels.
+class OptionalChain final : public Expression {
+ public:
+  Expression* expression() const { return expression_; }
+
+ private:
+  friend class AstNodeFactory;
+
+  explicit OptionalChain(Expression* expression)
+      : Expression(0, kOptionalChain), expression_(expression) {}
+
+  Expression* expression_;
+};
+
 // Assignments to a property will use one of several types of property access.
 // Otherwise, the assignment is to a non-property (a global, a local slot, a
 // parameter slot, or a destructuring pattern).
 enum AssignType {
-  NON_PROPERTY,
-  NAMED_PROPERTY,
-  KEYED_PROPERTY,
-  NAMED_SUPER_PROPERTY,
-  KEYED_SUPER_PROPERTY
+  NON_PROPERTY,              // destructuring
+  NAMED_PROPERTY,            // obj.key
+  KEYED_PROPERTY,            // obj[key]
+  NAMED_SUPER_PROPERTY,      // super.key
+  KEYED_SUPER_PROPERTY,      // super[key]
+  PRIVATE_METHOD,            // obj.#key: #key is a private method
+  PRIVATE_GETTER_ONLY,       // obj.#key: #key only has a getter defined
+  PRIVATE_SETTER_ONLY,       // obj.#key: #key only has a setter defined
+  PRIVATE_GETTER_AND_SETTER  // obj.#key: #key has both accessors defined
 };
 
 class Property final : public Expression {
  public:
+  bool is_optional_chain_link() const {
+    return IsOptionalChainLinkField::decode(bit_field_);
+  }
+
   bool IsValidReferenceExpression() const { return true; }
 
   Expression* obj() const { return obj_; }
   Expression* key() const { return key_; }
 
   bool IsSuperAccess() { return obj()->IsSuperPropertyReference(); }
+  bool IsPrivateReference() const { return key()->IsPrivateName(); }
 
   // Returns the properties assign type.
   static AssignType GetAssignType(Property* property) {
     if (property == nullptr) return NON_PROPERTY;
+    if (property->IsPrivateReference()) {
+      DCHECK(!property->IsSuperAccess());
+      VariableProxy* proxy = property->key()->AsVariableProxy();
+      DCHECK_NOT_NULL(proxy);
+      Variable* var = proxy->var();
+
+      switch (var->mode()) {
+        case VariableMode::kPrivateMethod:
+          return PRIVATE_METHOD;
+        case VariableMode::kConst:
+          return KEYED_PROPERTY;  // Use KEYED_PROPERTY for private fields.
+        case VariableMode::kPrivateGetterOnly:
+          return PRIVATE_GETTER_ONLY;
+        case VariableMode::kPrivateSetterOnly:
+          return PRIVATE_SETTER_ONLY;
+        case VariableMode::kPrivateGetterAndSetter:
+          return PRIVATE_GETTER_AND_SETTER;
+        default:
+          UNREACHABLE();
+      }
+    }
     bool super_access = property->IsSuperAccess();
     return (property->key()->IsPropertyName())
                ? (super_access ? NAMED_SUPER_PROPERTY : NAMED_PROPERTY)
@@ -1663,9 +1672,12 @@ class Property final : public Expression {
  private:
   friend class AstNodeFactory;
 
-  Property(Expression* obj, Expression* key, int pos)
+  Property(Expression* obj, Expression* key, int pos, bool optional_chain)
       : Expression(pos, kProperty), obj_(obj), key_(key) {
+    bit_field_ |= IsOptionalChainLinkField::encode(optional_chain);
   }
+
+  using IsOptionalChainLinkField = Expression::NextBitField<bool, 1>;
 
   Expression* obj_;
   Expression* key_;
@@ -1704,6 +1716,10 @@ class Call final : public Expression {
     return IsTaggedTemplateField::decode(bit_field_);
   }
 
+  bool is_optional_chain_link() const {
+    return IsOptionalChainLinkField::decode(bit_field_);
+  }
+
   bool only_last_arg_is_spread() {
     return !arguments_.is_empty() && arguments_.last()->IsSpread();
   }
@@ -1715,6 +1731,7 @@ class Call final : public Expression {
     KEYED_PROPERTY_CALL,
     NAMED_SUPER_PROPERTY_CALL,
     KEYED_SUPER_PROPERTY_CALL,
+    PRIVATE_CALL,
     SUPER_CALL,
     RESOLVED_PROPERTY_CALL,
     OTHER_CALL
@@ -1735,13 +1752,14 @@ class Call final : public Expression {
 
   Call(Zone* zone, Expression* expression,
        const ScopedPtrList<Expression>& arguments, int pos,
-       PossiblyEval possibly_eval)
+       PossiblyEval possibly_eval, bool optional_chain)
       : Expression(pos, kCall),
         expression_(expression),
         arguments_(0, nullptr) {
     bit_field_ |=
         IsPossiblyEvalField::encode(possibly_eval == IS_POSSIBLY_EVAL) |
-        IsTaggedTemplateField::encode(false);
+        IsTaggedTemplateField::encode(false) |
+        IsOptionalChainLinkField::encode(optional_chain);
     arguments.CopyTo(&arguments_, zone);
   }
 
@@ -1752,14 +1770,14 @@ class Call final : public Expression {
         expression_(expression),
         arguments_(0, nullptr) {
     bit_field_ |= IsPossiblyEvalField::encode(false) |
-                  IsTaggedTemplateField::encode(true);
+                  IsTaggedTemplateField::encode(true) |
+                  IsOptionalChainLinkField::encode(false);
     arguments.CopyTo(&arguments_, zone);
   }
 
-  class IsPossiblyEvalField
-      : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
-  class IsTaggedTemplateField
-      : public BitField<bool, IsPossiblyEvalField::kNext, 1> {};
+  using IsPossiblyEvalField = Expression::NextBitField<bool, 1>;
+  using IsTaggedTemplateField = IsPossiblyEvalField::Next<bool, 1>;
+  using IsOptionalChainLinkField = IsTaggedTemplateField::Next<bool, 1>;
 
   Expression* expression_;
   ZonePtrList<Expression> arguments_;
@@ -1851,8 +1869,7 @@ class UnaryOperation final : public Expression {
 
   Expression* expression_;
 
-  class OperatorField
-      : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
+  using OperatorField = Expression::NextBitField<Token::Value, 7>;
 };
 
 
@@ -1878,8 +1895,7 @@ class BinaryOperation final : public Expression {
   Expression* left_;
   Expression* right_;
 
-  class OperatorField
-      : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
+  using OperatorField = Expression::NextBitField<Token::Value, 7>;
 };
 
 class NaryOperation final : public Expression {
@@ -1938,8 +1954,7 @@ class NaryOperation final : public Expression {
   };
   ZoneVector<NaryOperationEntry> subsequent_;
 
-  class OperatorField
-      : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
+  using OperatorField = Expression::NextBitField<Token::Value, 7>;
 };
 
 class CountOperation final : public Expression {
@@ -1959,9 +1974,8 @@ class CountOperation final : public Expression {
     bit_field_ |= IsPrefixField::encode(is_prefix) | TokenField::encode(op);
   }
 
-  class IsPrefixField
-      : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
-  class TokenField : public BitField<Token::Value, IsPrefixField::kNext, 7> {};
+  using IsPrefixField = Expression::NextBitField<bool, 1>;
+  using TokenField = IsPrefixField::Next<Token::Value, 7>;
 
   Expression* expression_;
 };
@@ -1991,8 +2005,7 @@ class CompareOperation final : public Expression {
   Expression* left_;
   Expression* right_;
 
-  class OperatorField
-      : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
+  using OperatorField = Expression::NextBitField<Token::Value, 7>;
 };
 
 
@@ -2084,10 +2097,8 @@ class Assignment : public Expression {
  private:
   friend class AstNodeFactory;
 
-  class TokenField
-      : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
-  class LookupHoistingModeField : public BitField<bool, TokenField::kNext, 1> {
-  };
+  using TokenField = Expression::NextBitField<Token::Value, 7>;
+  using LookupHoistingModeField = TokenField::Next<bool, 1>;
 
   Expression* target_;
   Expression* value_;
@@ -2145,8 +2156,7 @@ class Suspend : public Expression {
 
   Expression* expression_;
 
-  class OnAbruptResumeField
-      : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 1> {};
+  using OnAbruptResumeField = Expression::NextBitField<OnAbruptResume, 1>;
 };
 
 class Yield final : public Suspend {
@@ -2383,17 +2393,15 @@ class FunctionLiteral final : public Expression {
     body.CopyTo(&body_, zone);
   }
 
-  class FunctionTypeBits
-      : public BitField<FunctionType, Expression::kNextBitFieldIndex, 3> {};
-  class Pretenure : public BitField<bool, FunctionTypeBits::kNext, 1> {};
-  class HasDuplicateParameters : public BitField<bool, Pretenure::kNext, 1> {};
-  class DontOptimizeReasonField
-      : public BitField<BailoutReason, HasDuplicateParameters::kNext, 8> {};
-  class RequiresInstanceMembersInitializer
-      : public BitField<bool, DontOptimizeReasonField::kNext, 1> {};
-  class HasBracesField
-      : public BitField<bool, RequiresInstanceMembersInitializer::kNext, 1> {};
-  class OneshotIIFEBit : public BitField<bool, HasBracesField::kNext, 1> {};
+  using FunctionTypeBits = Expression::NextBitField<FunctionType, 3>;
+  using Pretenure = FunctionTypeBits::Next<bool, 1>;
+  using HasDuplicateParameters = Pretenure::Next<bool, 1>;
+  using DontOptimizeReasonField =
+      HasDuplicateParameters::Next<BailoutReason, 8>;
+  using RequiresInstanceMembersInitializer =
+      DontOptimizeReasonField::Next<bool, 1>;
+  using HasBracesField = RequiresInstanceMembersInitializer::Next<bool, 1>;
+  using OneshotIIFEBit = HasBracesField::Next<bool, 1>;
 
   // expected_property_count_ is the sum of instance fields and properties.
   // It can vary depending on whether a function is lazily or eagerly parsed.
@@ -2443,6 +2451,11 @@ class ClassLiteralProperty final : public LiteralProperty {
   Variable* private_name_var() const {
     DCHECK(is_private());
     return private_or_computed_name_var_;
+  }
+
+  bool NeedsHomeObjectOnClassPrototype() const {
+    return is_private() && kind_ == METHOD &&
+           FunctionLiteral::NeedsHomeObject(value_);
   }
 
  private:
@@ -2538,12 +2551,9 @@ class ClassLiteral final : public Expression {
   ZonePtrList<Property>* properties_;
   FunctionLiteral* static_fields_initializer_;
   FunctionLiteral* instance_members_initializer_function_;
-  class HasNameStaticProperty
-      : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
-  class HasStaticComputedNames
-      : public BitField<bool, HasNameStaticProperty::kNext, 1> {};
-  class IsAnonymousExpression
-      : public BitField<bool, HasStaticComputedNames::kNext, 1> {};
+  using HasNameStaticProperty = Expression::NextBitField<bool, 1>;
+  using HasStaticComputedNames = HasNameStaticProperty::Next<bool, 1>;
+  using IsAnonymousExpression = HasStaticComputedNames::Next<bool, 1>;
 };
 
 
@@ -3059,8 +3069,13 @@ class AstNodeFactory final {
     return new (zone_) Variable(variable);
   }
 
-  Property* NewProperty(Expression* obj, Expression* key, int pos) {
-    return new (zone_) Property(obj, key, pos);
+  OptionalChain* NewOptionalChain(Expression* expression) {
+    return new (zone_) OptionalChain(expression);
+  }
+
+  Property* NewProperty(Expression* obj, Expression* key, int pos,
+                        bool optional_chain = false) {
+    return new (zone_) Property(obj, key, pos, optional_chain);
   }
 
   ResolvedProperty* NewResolvedProperty(VariableProxy* obj,
@@ -3071,8 +3086,10 @@ class AstNodeFactory final {
 
   Call* NewCall(Expression* expression,
                 const ScopedPtrList<Expression>& arguments, int pos,
-                Call::PossiblyEval possibly_eval = Call::NOT_EVAL) {
-    return new (zone_) Call(zone_, expression, arguments, pos, possibly_eval);
+                Call::PossiblyEval possibly_eval = Call::NOT_EVAL,
+                bool optional_chain = false) {
+    return new (zone_)
+        Call(zone_, expression, arguments, pos, possibly_eval, optional_chain);
   }
 
   Call* NewTaggedTemplate(Expression* expression,

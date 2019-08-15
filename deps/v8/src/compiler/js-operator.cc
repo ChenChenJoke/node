@@ -17,7 +17,7 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-std::ostream& operator<<(std::ostream& os, CallFrequency f) {
+std::ostream& operator<<(std::ostream& os, CallFrequency const& f) {
   if (f.IsUnknown()) return os << "unknown";
   return os << f.value();
 }
@@ -27,7 +27,6 @@ CallFrequency CallFrequencyOf(Operator const* op) {
          op->opcode() == IrOpcode::kJSConstructWithArrayLike);
   return OpParameter<CallFrequency>(op);
 }
-
 
 std::ostream& operator<<(std::ostream& os,
                          ConstructForwardVarargsParameters const& p) {
@@ -284,7 +283,8 @@ bool operator!=(PropertyAccess const& lhs, PropertyAccess const& rhs) {
 PropertyAccess const& PropertyAccessOf(const Operator* op) {
   DCHECK(op->opcode() == IrOpcode::kJSHasProperty ||
          op->opcode() == IrOpcode::kJSLoadProperty ||
-         op->opcode() == IrOpcode::kJSStoreProperty);
+         op->opcode() == IrOpcode::kJSStoreProperty ||
+         op->opcode() == IrOpcode::kJSGetIterator);
   return OpParameter<PropertyAccess>(op);
 }
 
@@ -843,7 +843,8 @@ const Operator* JSOperatorBuilder::Call(size_t arity,
       parameters);                                 // parameter
 }
 
-const Operator* JSOperatorBuilder::CallWithArrayLike(CallFrequency frequency) {
+const Operator* JSOperatorBuilder::CallWithArrayLike(
+    CallFrequency const& frequency) {
   return new (zone()) Operator1<CallFrequency>(                 // --
       IrOpcode::kJSCallWithArrayLike, Operator::kNoProperties,  // opcode
       "JSCallWithArrayLike",                                    // name
@@ -899,8 +900,10 @@ const Operator* JSOperatorBuilder::ConstructForwardVarargs(
       parameters);  // parameter
 }
 
+// Note: frequency is taken by reference to work around a GCC bug
+// on AIX (v8:8193).
 const Operator* JSOperatorBuilder::Construct(uint32_t arity,
-                                             CallFrequency frequency,
+                                             CallFrequency const& frequency,
                                              VectorSlotPair const& feedback) {
   ConstructParameters parameters(arity, frequency, feedback);
   return new (zone()) Operator1<ConstructParameters>(   // --
@@ -911,7 +914,7 @@ const Operator* JSOperatorBuilder::Construct(uint32_t arity,
 }
 
 const Operator* JSOperatorBuilder::ConstructWithArrayLike(
-    CallFrequency frequency) {
+    CallFrequency const& frequency) {
   return new (zone()) Operator1<CallFrequency>(  // --
       IrOpcode::kJSConstructWithArrayLike,       // opcode
       Operator::kNoProperties,                   // properties
@@ -921,7 +924,8 @@ const Operator* JSOperatorBuilder::ConstructWithArrayLike(
 }
 
 const Operator* JSOperatorBuilder::ConstructWithSpread(
-    uint32_t arity, CallFrequency frequency, VectorSlotPair const& feedback) {
+    uint32_t arity, CallFrequency const& frequency,
+    VectorSlotPair const& feedback) {
   ConstructParameters parameters(arity, frequency, feedback);
   return new (zone()) Operator1<ConstructParameters>(             // --
       IrOpcode::kJSConstructWithSpread, Operator::kNoProperties,  // opcode
@@ -948,6 +952,15 @@ const Operator* JSOperatorBuilder::LoadProperty(
       "JSLoadProperty",                                    // name
       2, 1, 1, 1, 1, 2,                                    // counts
       access);                                             // parameter
+}
+
+const Operator* JSOperatorBuilder::GetIterator(VectorSlotPair const& feedback) {
+  PropertyAccess access(LanguageMode::kSloppy, feedback);
+  return new (zone()) Operator1<PropertyAccess>(          // --
+      IrOpcode::kJSGetIterator, Operator::kNoProperties,  // opcode
+      "JSGetIterator",                                    // name
+      1, 1, 1, 1, 1, 2,                                   // counts
+      access);                                            // parameter
 }
 
 const Operator* JSOperatorBuilder::HasProperty(VectorSlotPair const& feedback) {

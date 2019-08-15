@@ -274,9 +274,9 @@ void InstructionSelector::VisitStackSlot(Node* node) {
        sequence()->AddImmediate(Constant(alignment)), 0, nullptr);
 }
 
-void InstructionSelector::VisitDebugAbort(Node* node) {
+void InstructionSelector::VisitAbortCSAAssert(Node* node) {
   MipsOperandGenerator g(this);
-  Emit(kArchDebugAbort, g.NoOutput(), g.UseFixed(node->InputAt(0), a0));
+  Emit(kArchAbortCSAAssert, g.NoOutput(), g.UseFixed(node->InputAt(0), a0));
 }
 
 void InstructionSelector::VisitLoad(Node* node) {
@@ -352,7 +352,8 @@ void InstructionSelector::VisitStore(Node* node) {
   MachineRepresentation rep = store_rep.representation();
 
   // TODO(mips): I guess this could be done in a better way.
-  if (write_barrier_kind != kNoWriteBarrier) {
+  if (write_barrier_kind != kNoWriteBarrier &&
+      V8_LIKELY(!FLAG_disable_write_barriers)) {
     DCHECK(CanBeTaggedPointer(rep));
     InstructionOperand inputs[3];
     size_t input_count = 0;
@@ -1773,6 +1774,11 @@ void InstructionSelector::VisitFloat64SilenceNaN(Node* node) {
   InstructionOperand temps[] = {g.TempRegister()};
   Emit(kMipsFloat64SilenceNaN, g.DefineSameAsFirst(node), g.UseRegister(left),
        arraysize(temps), temps);
+}
+
+void InstructionSelector::VisitMemoryBarrier(Node* node) {
+  MipsOperandGenerator g(this);
+  Emit(kMipsSync, g.NoOutput());
 }
 
 void InstructionSelector::VisitWord32AtomicLoad(Node* node) {

@@ -121,7 +121,7 @@ class Operand {
 
 // On MIPS we have only one addressing mode with base_reg + offset.
 // Class MemOperand represents a memory operand in load and store instructions.
-class MemOperand : public Operand {
+class V8_EXPORT_PRIVATE  MemOperand : public Operand {
  public:
   // Immediate value attached to offset.
   enum OffsetAddend { offset_minus_one = -1, offset_zero = 0 };
@@ -601,7 +601,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
   // Break / Trap instructions.
   void break_(uint32_t code, bool break_as_stop = false);
-  void stop(const char* msg, uint32_t code = kMaxStopCode);
+  void stop(uint32_t code = kMaxStopCode);
   void tge(Register rs, Register rt, uint16_t code);
   void tgeu(Register rs, Register rt, uint16_t code);
   void tlt(Register rs, Register rt, uint16_t code);
@@ -1560,7 +1560,7 @@ class V8_EXPORT_PRIVATE Assembler : public AssemblerBase {
 
   // Helper function for memory load/store using base register and offset.
   void AdjustBaseAndOffset(
-      MemOperand& src,
+      MemOperand& src,  // NOLINT(runtime/references)
       OffsetAccessType access_type = OffsetAccessType::SINGLE_ACCESS,
       int second_access_add_to_offset = 4);
 
@@ -1899,7 +1899,7 @@ class EnsureSpace {
   explicit inline EnsureSpace(Assembler* assembler);
 };
 
-class UseScratchRegisterScope {
+class V8_EXPORT_PRIVATE UseScratchRegisterScope {
  public:
   explicit UseScratchRegisterScope(Assembler* assembler);
   ~UseScratchRegisterScope();

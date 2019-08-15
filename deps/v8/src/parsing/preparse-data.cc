@@ -21,22 +21,18 @@ namespace internal {
 
 namespace {
 
-class ScopeCallsSloppyEvalField : public BitField8<bool, 0, 1> {};
-class InnerScopeCallsEvalField
-    : public BitField8<bool, ScopeCallsSloppyEvalField::kNext, 1> {};
+using ScopeCallsSloppyEvalField = BitField8<bool, 0, 1>;
+using InnerScopeCallsEvalField = ScopeCallsSloppyEvalField::Next<bool, 1>;
 
-class VariableMaybeAssignedField : public BitField8<bool, 0, 1> {};
-class VariableContextAllocatedField
-    : public BitField8<bool, VariableMaybeAssignedField::kNext, 1> {};
+using VariableMaybeAssignedField = BitField8<bool, 0, 1>;
+using VariableContextAllocatedField = VariableMaybeAssignedField::Next<bool, 1>;
 
-class HasDataField : public BitField<bool, 0, 1> {};
-class LengthEqualsParametersField
-    : public BitField<bool, HasDataField::kNext, 1> {};
-class NumberOfParametersField
-    : public BitField<uint16_t, LengthEqualsParametersField::kNext, 16> {};
+using HasDataField = BitField<bool, 0, 1>;
+using LengthEqualsParametersField = HasDataField::Next<bool, 1>;
+using NumberOfParametersField = LengthEqualsParametersField::Next<uint16_t, 16>;
 
-class LanguageField : public BitField8<LanguageMode, 0, 1> {};
-class UsesSuperField : public BitField8<bool, LanguageField::kNext, 1> {};
+using LanguageField = BitField8<LanguageMode, 0, 1>;
+using UsesSuperField = LanguageField::Next<bool, 1>;
 STATIC_ASSERT(LanguageModeSize <= LanguageField::kNumValues);
 
 }  // namespace
@@ -266,7 +262,7 @@ bool PreparseDataBuilder::ScopeNeedsData(Scope* scope) {
   }
   if (!scope->is_hidden()) {
     for (Variable* var : *scope->locals()) {
-      if (IsDeclaredVariableMode(var->mode())) return true;
+      if (IsSerializableVariableMode(var->mode())) return true;
     }
   }
   for (Scope* inner = scope->inner_scope(); inner != nullptr;
@@ -369,7 +365,7 @@ void PreparseDataBuilder::SaveDataForScope(Scope* scope) {
   }
 
   for (Variable* var : *scope->locals()) {
-    if (IsDeclaredVariableMode(var->mode())) SaveDataForVariable(var);
+    if (IsSerializableVariableMode(var->mode())) SaveDataForVariable(var);
   }
 
   SaveDataForInnerScopes(scope);
@@ -612,7 +608,7 @@ void BaseConsumedPreparseData<Data>::RestoreDataForScope(Scope* scope) {
   }
 
   for (Variable* var : *scope->locals()) {
-    if (IsDeclaredVariableMode(var->mode())) RestoreDataForVariable(var);
+    if (IsSerializableVariableMode(var->mode())) RestoreDataForVariable(var);
   }
 
   RestoreDataForInnerScopes(scope);
@@ -645,7 +641,7 @@ void BaseConsumedPreparseData<Data>::RestoreDataForVariable(Variable* var) {
 #endif
   uint8_t variable_data = scope_data_->ReadQuarter();
   if (VariableMaybeAssignedField::decode(variable_data)) {
-    var->set_maybe_assigned();
+    var->SetMaybeAssigned();
   }
   if (VariableContextAllocatedField::decode(variable_data)) {
     var->set_is_used();

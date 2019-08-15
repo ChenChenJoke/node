@@ -14,9 +14,9 @@
 #include "src/objects/js-generator.h"
 #include "src/objects/js-promise.h"
 #include "src/objects/js-proxy.h"
-#include "src/objects/module.h"
 #include "src/objects/objects.h"
 #include "src/objects/shared-function-info.h"
+#include "src/objects/source-text-module.h"
 #include "src/utils/detachable-vector.h"
 
 #include "src/objects/templates.h"
@@ -90,6 +90,7 @@ class RegisteredExtension {
   V(Data, Object)                              \
   V(RegExp, JSRegExp)                          \
   V(Object, JSReceiver)                        \
+  V(FinalizationGroup, JSFinalizationGroup)    \
   V(Array, JSArray)                            \
   V(Map, JSMap)                                \
   V(Set, JSSet)                                \
@@ -198,6 +199,8 @@ class Utils {
       v8::internal::Handle<v8::internal::JSTypedArray> obj);
   static inline Local<BigUint64Array> ToLocalBigUint64Array(
       v8::internal::Handle<v8::internal::JSTypedArray> obj);
+  static inline Local<FinalizationGroup> ToLocal(
+      v8::internal::Handle<v8::internal::JSFinalizationGroup> obj);
 
   static inline Local<SharedArrayBuffer> ToLocalShared(
       v8::internal::Handle<v8::internal::JSArrayBuffer> obj);

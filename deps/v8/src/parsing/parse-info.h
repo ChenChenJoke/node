@@ -105,8 +105,8 @@ class V8_EXPORT_PRIVATE ParseInfo {
                 set_allow_harmony_dynamic_import)
   FLAG_ACCESSOR(kAllowHarmonyImportMeta, allow_harmony_import_meta,
                 set_allow_harmony_import_meta)
-  FLAG_ACCESSOR(kAllowHarmonyNumericSeparator, allow_harmony_numeric_separator,
-                set_allow_harmony_numeric_separator)
+  FLAG_ACCESSOR(kAllowHarmonyOptionalChaining, allow_harmony_optional_chaining,
+                set_allow_harmony_optional_chaining)
   FLAG_ACCESSOR(kAllowHarmonyPrivateMethods, allow_harmony_private_methods,
                 set_allow_harmony_private_methods)
   FLAG_ACCESSOR(kIsOneshotIIFE, is_oneshot_iife, set_is_oneshot_iife)
@@ -306,7 +306,7 @@ class V8_EXPORT_PRIVATE ParseInfo {
     kAllowHarmonyStaticFields = 1 << 24,
     kAllowHarmonyDynamicImport = 1 << 25,
     kAllowHarmonyImportMeta = 1 << 26,
-    kAllowHarmonyNumericSeparator = 1 << 27,
+    kAllowHarmonyOptionalChaining = 1 << 27,
     kAllowHarmonyPrivateFields = 1 << 28,
     kAllowHarmonyPrivateMethods = 1 << 29,
     kIsOneshotIIFE = 1 << 30,

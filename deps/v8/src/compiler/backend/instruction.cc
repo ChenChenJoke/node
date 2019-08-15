@@ -530,7 +530,7 @@ Constant::Constant(RelocatablePtrConstantInfo info) {
 }
 
 Handle<HeapObject> Constant::ToHeapObject() const {
-  DCHECK_EQ(kHeapObject, type());
+  DCHECK(kHeapObject == type() || kCompressedHeapObject == type());
   Handle<HeapObject> value(
       reinterpret_cast<Address*>(static_cast<intptr_t>(value_)));
   return value;
@@ -561,7 +561,8 @@ std::ostream& operator<<(std::ostream& os, const Constant& constant) {
       return os << constant.ToFloat64().value();
     case Constant::kExternalReference:
       return os << constant.ToExternalReference().address();
-    case Constant::kHeapObject:
+    case Constant::kHeapObject:  // Fall through.
+    case Constant::kCompressedHeapObject:
       return os << Brief(*constant.ToHeapObject());
     case Constant::kRpoNumber:
       return os << "RPO" << constant.ToRpoNumber().ToInt();
@@ -1016,6 +1017,29 @@ FrameStateDescriptor::FrameStateDescriptor(
       values_(zone),
       shared_info_(shared_info),
       outer_state_(outer_state) {}
+
+size_t FrameStateDescriptor::GetHeight() const {
+  // TODO(jgruber): Unify how the height is handled. Currently, we seem to add
+  // and subtract 1 at random spots. For example, for interpreted functions we
+  // add 1 here, and subtract it in DoComputeInterpretedFrame. For builtin
+  // continuation frames, we add 1 in CreateNextTranslatedFrame, and subtract
+  // it in DoComputeBuiltinContinuation. Arguments adaptor frames thread through
+  // the height unmodified.
+  // Handling in all these cases should ideally be consistent and use named
+  // constants.
+  switch (type()) {
+    case FrameStateType::kInterpretedFunction:
+      return locals_count() + 1;  // +1 for the accumulator.
+    case FrameStateType::kConstructStub:
+      return parameters_count() + 1;  // +1 for the context.
+    case FrameStateType::kArgumentsAdaptor:
+    case FrameStateType::kBuiltinContinuation:
+    case FrameStateType::kJavaScriptBuiltinContinuation:
+    case FrameStateType::kJavaScriptBuiltinContinuationWithCatch:
+      return parameters_count();
+  }
+  UNREACHABLE();
+}
 
 size_t FrameStateDescriptor::GetSize() const {
   return 1 + parameters_count() + locals_count() + stack_count() +

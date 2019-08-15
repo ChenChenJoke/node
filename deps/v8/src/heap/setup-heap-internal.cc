@@ -29,7 +29,6 @@
 #include "src/objects/lookup-cache.h"
 #include "src/objects/map.h"
 #include "src/objects/microtask.h"
-#include "src/objects/module.h"
 #include "src/objects/objects-inl.h"
 #include "src/objects/oddball-inl.h"
 #include "src/objects/ordered-hash-table.h"
@@ -37,11 +36,15 @@
 #include "src/objects/script.h"
 #include "src/objects/shared-function-info.h"
 #include "src/objects/smi.h"
+#include "src/objects/source-text-module.h"
 #include "src/objects/stack-frame-info.h"
 #include "src/objects/string.h"
+#include "src/objects/synthetic-module.h"
 #include "src/objects/template-objects-inl.h"
-#include "src/regexp/jsregexp.h"
+#include "src/regexp/regexp.h"
 #include "src/wasm/wasm-objects.h"
+#include "torque-generated/class-definitions-tq.h"
+#include "torque-generated/internal-class-definitions-tq-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -485,7 +488,10 @@ bool Heap::CreateInitialMaps() {
                  uncompiled_data_with_preparse_data)
     ALLOCATE_MAP(SHARED_FUNCTION_INFO_TYPE, SharedFunctionInfo::kAlignedSize,
                  shared_function_info)
-
+    ALLOCATE_MAP(SOURCE_TEXT_MODULE_TYPE, SourceTextModule::kSize,
+                 source_text_module)
+    ALLOCATE_MAP(SYNTHETIC_MODULE_TYPE, SyntheticModule::kSize,
+                 synthetic_module)
     ALLOCATE_MAP(CODE_DATA_CONTAINER_TYPE, CodeDataContainer::kSize,
                  code_data_container)
 
@@ -819,6 +825,15 @@ void Heap::CreateInitialObjects() {
       factory->NewFeedbackMetadata(0, 0, AllocationType::kReadOnly);
   set_empty_feedback_metadata(*empty_feedback_metadata);
 
+  // Canonical scope arrays.
+  Handle<ScopeInfo> global_this_binding =
+      ScopeInfo::CreateGlobalThisBinding(isolate());
+  set_global_this_binding_scope_info(*global_this_binding);
+
+  Handle<ScopeInfo> empty_function =
+      ScopeInfo::CreateForEmptyFunction(isolate());
+  set_empty_function_scope_info(*empty_function);
+
   // Allocate the empty script.
   Handle<Script> script = factory->NewScript(factory->empty_string());
   script->set_type(Script::TYPE_NATIVE);
@@ -867,10 +882,6 @@ void Heap::CreateInitialObjects() {
   cell = factory->NewPropertyCell(factory->empty_string());
   cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
   set_promise_species_protector(*cell);
-
-  cell = factory->NewPropertyCell(factory->empty_string());
-  cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
-  set_regexp_species_protector(*cell);
 
   cell = factory->NewPropertyCell(factory->empty_string());
   cell->set_value(Smi::FromInt(Isolate::kProtectorValid));

@@ -9,7 +9,7 @@
 #include "src/ast/ast.h"
 #include "src/base/optional.h"
 #include "src/builtins/accessors.h"
-#include "src/execution/message-template.h"
+#include "src/common/message-template.h"
 #include "src/init/bootstrapper.h"
 #include "src/logging/counters.h"
 #include "src/objects/module-inl.h"
@@ -128,7 +128,7 @@ ModuleScope::ModuleScope(DeclarationScope* script_scope,
                          AstValueFactory* avfactory)
     : DeclarationScope(avfactory->zone(), script_scope, MODULE_SCOPE, kModule),
       module_descriptor_(new (avfactory->zone())
-                             ModuleDescriptor(avfactory->zone())) {
+                             SourceTextModuleDescriptor(avfactory->zone())) {
   set_language_mode(LanguageMode::kStrict);
   DeclareThis(avfactory);
 }
@@ -262,7 +262,6 @@ void Scope::SetDefaults() {
   is_debug_evaluate_scope_ = false;
 
   inner_scope_calls_eval_ = false;
-  force_context_allocation_ = false;
   force_context_allocation_for_parameters_ = false;
 
   is_declaration_scope_ = false;
@@ -379,11 +378,8 @@ Scope* Scope::DeserializeScopeChain(Isolate* isolate, Zone* zone,
 
   if (deserialization_mode == DeserializationMode::kIncludingVariables &&
       script_scope->scope_info_.is_null()) {
-    Handle<ScriptContextTable> table(
-        isolate->native_context()->script_context_table(), isolate);
-    Handle<Context> first = ScriptContextTable::GetContext(isolate, table, 0);
-    Handle<ScopeInfo> scope_info(first->scope_info(), isolate);
-    script_scope->SetScriptScopeInfo(scope_info);
+    script_scope->SetScriptScopeInfo(
+        ReadOnlyRoots(isolate).global_this_binding_scope_info_handle());
   }
 
   if (innermost_scope == nullptr) return script_scope;
@@ -506,8 +502,9 @@ void DeclarationScope::HoistSloppyBlockFunctions(AstNodeFactory* factory) {
       DCHECK(is_being_lazily_parsed_);
       bool was_added;
       Variable* var = DeclareVariableName(name, VariableMode::kVar, &was_added);
-      if (sloppy_block_function->init() == Token::ASSIGN)
-        var->set_maybe_assigned();
+      if (sloppy_block_function->init() == Token::ASSIGN) {
+        var->SetMaybeAssigned();
+      }
     }
   }
 }
@@ -869,6 +866,8 @@ Variable* Scope::DeclareLocal(const AstRawString* name, VariableMode mode,
                               VariableKind kind, bool* was_added,
                               InitializationFlag init_flag) {
   DCHECK(!already_resolved_);
+  // Private methods should be declared with ClassScope::DeclarePrivateName()
+  DCHECK(!IsPrivateMethodOrAccessorVariableMode(mode));
   // This function handles VariableMode::kVar, VariableMode::kLet, and
   // VariableMode::kConst modes.  VariableMode::kDynamic variables are
   // introduced during variable allocation, and VariableMode::kTemporary
@@ -889,7 +888,7 @@ Variable* Scope::DeclareLocal(const AstRawString* name, VariableMode mode,
   // assigned because they might be accessed by a lazily parsed top-level
   // function, which, for efficiency, we preparse without variable tracking.
   if (is_script_scope() || is_module_scope()) {
-    if (mode != VariableMode::kConst) var->set_maybe_assigned();
+    if (mode != VariableMode::kConst) var->SetMaybeAssigned();
     var->set_is_used();
   }
 
@@ -901,6 +900,8 @@ Variable* Scope::DeclareVariable(
     VariableMode mode, VariableKind kind, InitializationFlag init,
     bool* was_added, bool* sloppy_mode_block_scope_function_redefinition,
     bool* ok) {
+  // Private methods should be declared with ClassScope::DeclarePrivateName()
+  DCHECK(!IsPrivateMethodOrAccessorVariableMode(mode));
   DCHECK(IsDeclaredVariableMode(mode));
   DCHECK(!already_resolved_);
   DCHECK(!GetDeclarationScope()->is_being_lazily_parsed());
@@ -938,7 +939,7 @@ Variable* Scope::DeclareVariable(
       DCHECK(*was_added);
     }
   } else {
-    var->set_maybe_assigned();
+    var->SetMaybeAssigned();
     if (V8_UNLIKELY(IsLexicalVariableMode(mode) ||
                     IsLexicalVariableMode(var->mode()))) {
       // The name was declared in this scope before; check for conflicting
@@ -986,7 +987,8 @@ Variable* Scope::DeclareVariableName(const AstRawString* name,
   DCHECK(IsDeclaredVariableMode(mode));
   DCHECK(!already_resolved_);
   DCHECK(GetDeclarationScope()->is_being_lazily_parsed());
-
+  // Private methods should be declared with ClassScope::DeclarePrivateName()
+  DCHECK(!IsPrivateMethodOrAccessorVariableMode(mode));
   if (mode == VariableMode::kVar && !is_declaration_scope()) {
     return GetDeclarationScope()->DeclareVariableName(name, mode, was_added,
                                                       kind);
@@ -1009,7 +1011,7 @@ Variable* Scope::DeclareVariableName(const AstRawString* name,
       }
       // Sloppy block function redefinition.
     }
-    var->set_maybe_assigned();
+    var->SetMaybeAssigned();
   }
   var->set_is_used();
   return var;
@@ -1063,7 +1065,7 @@ Variable* Scope::NewTemporary(const AstRawString* name,
   Variable* var = new (zone()) Variable(scope, name, VariableMode::kTemporary,
                                         NORMAL_VARIABLE, kCreatedInitialized);
   scope->AddLocal(var);
-  if (maybe_assigned == kMaybeAssigned) var->set_maybe_assigned();
+  if (maybe_assigned == kMaybeAssigned) var->SetMaybeAssigned();
   return var;
 }
 
@@ -1401,7 +1403,7 @@ void Scope::AnalyzePartially(DeclarationScope* max_outer_scope,
         }
       } else {
         var->set_is_used();
-        if (proxy->is_assigned()) var->set_maybe_assigned();
+        if (proxy->is_assigned()) var->SetMaybeAssigned();
       }
     }
 
@@ -1806,7 +1808,18 @@ Variable* Scope::Lookup(VariableProxy* proxy, Scope* scope,
     // We found a variable and we are done. (Even if there is an 'eval' in this
     // scope which introduces the same variable again, the resulting variable
     // remains the same.)
-    if (var != nullptr) {
+    //
+    // For sloppy eval though, we skip dynamic variable to avoid resolving to a
+    // variable when the variable and proxy are in the same eval execution. The
+    // variable is not available on subsequent lazy executions of functions in
+    // the eval, so this avoids inner functions from looking up different
+    // variables during eager and lazy compilation.
+    //
+    // TODO(leszeks): Maybe we want to restrict this to e.g. lookups of a proxy
+    // living in a different scope to the current one, or some other
+    // optimisation.
+    if (var != nullptr &&
+        !(scope->is_eval_scope() && var->mode() == VariableMode::kDynamic)) {
       if (mode == kParsedScope && force_context_allocation &&
           !var->is_dynamic()) {
         var->ForceContextAllocation();
@@ -1879,11 +1892,14 @@ Variable* Scope::LookupWith(VariableProxy* proxy, Scope* scope,
     DCHECK(!scope->already_resolved_);
     var->set_is_used();
     var->ForceContextAllocation();
-    if (proxy->is_assigned()) var->set_maybe_assigned();
+    if (proxy->is_assigned()) var->SetMaybeAssigned();
   }
   if (entry_point != nullptr) entry_point->variables_.Remove(var);
   Scope* target = entry_point == nullptr ? scope : entry_point;
-  return target->NonLocal(proxy->raw_name(), VariableMode::kDynamic);
+  Variable* dynamic =
+      target->NonLocal(proxy->raw_name(), VariableMode::kDynamic);
+  dynamic->set_local_if_not_shadowed(var);
+  return dynamic;
 }
 
 Variable* Scope::LookupSloppyEval(VariableProxy* proxy, Scope* scope,
@@ -1912,7 +1928,7 @@ Variable* Scope::LookupSloppyEval(VariableProxy* proxy, Scope* scope,
   // script scope are always dynamic.
   if (var->IsGlobalObjectProperty()) {
     Scope* target = entry_point == nullptr ? scope : entry_point;
-    return target->NonLocal(proxy->raw_name(), VariableMode::kDynamicGlobal);
+    var = target->NonLocal(proxy->raw_name(), VariableMode::kDynamicGlobal);
   }
 
   if (var->is_dynamic()) return var;
@@ -2010,7 +2026,7 @@ void Scope::ResolvePreparsedVariable(VariableProxy* proxy, Scope* scope,
       var->set_is_used();
       if (!var->is_dynamic()) {
         var->ForceContextAllocation();
-        if (proxy->is_assigned()) var->set_maybe_assigned();
+        if (proxy->is_assigned()) var->SetMaybeAssigned();
         return;
       }
     }
@@ -2054,7 +2070,7 @@ bool Scope::MustAllocate(Variable* var) {
   if (!var->raw_name()->IsEmpty() &&
       (inner_scope_calls_eval_ || is_catch_scope() || is_script_scope())) {
     var->set_is_used();
-    if (inner_scope_calls_eval_) var->set_maybe_assigned();
+    if (inner_scope_calls_eval_ && !var->is_this()) var->SetMaybeAssigned();
   }
   DCHECK(!var->has_forced_context_allocation() || var->is_used());
   // Global variables do not need to be allocated.
@@ -2070,11 +2086,14 @@ bool Scope::MustAllocateInContext(Variable* var) {
   //
   // Temporary variables are always stack-allocated.  Catch-bound variables are
   // always context-allocated.
-  if (var->mode() == VariableMode::kTemporary) return false;
+  VariableMode mode = var->mode();
+  if (mode == VariableMode::kTemporary) return false;
   if (is_catch_scope()) return true;
-  if ((is_script_scope() || is_eval_scope()) &&
-      IsLexicalVariableMode(var->mode())) {
-    return true;
+  if (is_script_scope() || is_eval_scope()) {
+    if (IsLexicalVariableMode(mode) ||
+        IsPrivateMethodOrAccessorVariableMode(mode)) {
+      return true;
+    }
   }
   return var->has_forced_context_allocation() || inner_scope_calls_eval_;
 }
@@ -2124,7 +2143,7 @@ void DeclarationScope::AllocateParameterLocals() {
     DCHECK_EQ(this, var->scope());
     if (has_mapped_arguments) {
       var->set_is_used();
-      var->set_maybe_assigned();
+      var->SetMaybeAssigned();
       var->ForceContextAllocation();
     }
     AllocateParameter(var, i);
@@ -2315,14 +2334,28 @@ int Scope::ContextLocalCount() const {
          (is_function_var_in_context ? 1 : 0);
 }
 
+bool IsComplementaryAccessorPair(VariableMode a, VariableMode b) {
+  switch (a) {
+    case VariableMode::kPrivateGetterOnly:
+      return b == VariableMode::kPrivateSetterOnly;
+    case VariableMode::kPrivateSetterOnly:
+      return b == VariableMode::kPrivateGetterOnly;
+    default:
+      return false;
+  }
+}
+
 Variable* ClassScope::DeclarePrivateName(const AstRawString* name,
-                                         bool* was_added) {
+                                         VariableMode mode, bool* was_added) {
   Variable* result = EnsureRareData()->private_name_map.Declare(
-      zone(), this, name, VariableMode::kConst, NORMAL_VARIABLE,
+      zone(), this, name, mode, NORMAL_VARIABLE,
       InitializationFlag::kNeedsInitialization,
       MaybeAssignedFlag::kMaybeAssigned, was_added);
   if (*was_added) {
     locals_.Add(result);
+  } else if (IsComplementaryAccessorPair(result->mode(), mode)) {
+    *was_added = true;
+    result->set_mode(VariableMode::kPrivateGetterAndSetter);
   }
   result->ForceContextAllocation();
   return result;
@@ -2410,14 +2443,14 @@ Variable* ClassScope::LookupPrivateNameInScopeInfo(const AstRawString* name) {
     return nullptr;
   }
 
-  DCHECK_EQ(mode, VariableMode::kConst);
+  DCHECK(IsConstVariableMode(mode));
   DCHECK_EQ(init_flag, InitializationFlag::kNeedsInitialization);
   DCHECK_EQ(maybe_assigned_flag, MaybeAssignedFlag::kMaybeAssigned);
 
   // Add the found private name to the map to speed up subsequent
   // lookups for the same name.
   bool was_added;
-  Variable* var = DeclarePrivateName(name, &was_added);
+  Variable* var = DeclarePrivateName(name, mode, &was_added);
   DCHECK(was_added);
   var->AllocateTo(VariableLocation::CONTEXT, index);
   return var;
@@ -2454,8 +2487,7 @@ bool ClassScope::ResolvePrivateNames(ParseInfo* info) {
       Scanner::Location loc = proxy->location();
       info->pending_error_handler()->ReportMessageAt(
           loc.beg_pos, loc.end_pos,
-          MessageTemplate::kInvalidPrivateFieldResolution, proxy->raw_name(),
-          kSyntaxError);
+          MessageTemplate::kInvalidPrivateFieldResolution, proxy->raw_name());
       return false;
     } else {
       var->set_is_used();

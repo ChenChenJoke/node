@@ -18,8 +18,8 @@ namespace v8 {
 class HeapGraphNode;
 struct HeapStatsUpdate;
 
-typedef uint32_t SnapshotObjectId;
-
+using NativeObject = void*;
+using SnapshotObjectId = uint32_t;
 
 struct CpuProfileDeoptFrame {
   int script_id;
@@ -307,6 +307,15 @@ enum CpuProfilingNamingMode {
   kDebugNaming,
 };
 
+enum CpuProfilingLoggingMode {
+  // Enables logging when a profile is active, and disables logging when all
+  // profiles are detached.
+  kLazyLogging,
+  // Enables logging for the lifetime of the CpuProfiler. Calls to
+  // StartRecording are faster, at the expense of runtime overhead.
+  kEagerLogging,
+};
+
 /**
  * Optional profiling attributes.
  */
@@ -357,7 +366,8 @@ class V8_EXPORT CpuProfiler {
    * |Dispose| method.
    */
   static CpuProfiler* New(Isolate* isolate,
-                          CpuProfilingNamingMode = kDebugNaming);
+                          CpuProfilingNamingMode = kDebugNaming,
+                          CpuProfilingLoggingMode = kLazyLogging);
 
   /**
    * Synchronously collect current stack sample in all profilers attached to
@@ -798,6 +808,12 @@ class V8_EXPORT EmbedderGraph {
      */
     virtual const char* NamePrefix() { return nullptr; }
 
+    /**
+     * Returns the NativeObject that can be used for querying the
+     * |HeapSnapshot|.
+     */
+    virtual NativeObject GetNativeObject() { return nullptr; }
+
     Node(const Node&) = delete;
     Node& operator=(const Node&) = delete;
   };
@@ -859,6 +875,12 @@ class V8_EXPORT HeapProfiler {
    * it has been seen by the heap profiler, kUnknownObjectId otherwise.
    */
   SnapshotObjectId GetObjectId(Local<Value> value);
+
+  /**
+   * Returns SnapshotObjectId for a native object referenced by |value| if it
+   * has been seen by the heap profiler, kUnknownObjectId otherwise.
+   */
+  SnapshotObjectId GetObjectId(NativeObject value);
 
   /**
    * Returns heap object with given SnapshotObjectId if the object is alive,

@@ -206,10 +206,13 @@ DEFINE_IMPLICATION(harmony_import_meta, harmony_dynamic_import)
 #define HARMONY_INPROGRESS_BASE(V)                                        \
   V(harmony_private_methods, "harmony private methods in class literals") \
   V(harmony_regexp_sequence, "RegExp Unicode sequence properties")        \
-  V(harmony_weak_refs, "harmony weak references")
+  V(harmony_weak_refs, "harmony weak references")                         \
+  V(harmony_optional_chaining, "harmony optional chaining syntax")
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
+#define HARMONY_INPROGRESS(V)                              \
+  HARMONY_INPROGRESS_BASE(V)                               \
+  V(harmony_intl_dateformat_quarter, "Add quarter option to DateTimeFormat")
 #else
 #define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
 #endif
@@ -218,11 +221,14 @@ DEFINE_IMPLICATION(harmony_import_meta, harmony_dynamic_import)
 #define HARMONY_STAGED_BASE(V)
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_STAGED(V)                                                    \
-  HARMONY_STAGED_BASE(V)                                                     \
-  V(harmony_intl_add_calendar_numbering_system,                              \
-    "Add calendar and numberingSystem to DateTimeFormat")                    \
-  V(harmony_intl_numberformat_unified, "Unified Intl.NumberFormat Features") \
+#define HARMONY_STAGED(V)                                  \
+  HARMONY_STAGED_BASE(V)                                   \
+  V(harmony_intl_add_calendar_numbering_system,            \
+    "Add calendar and numberingSystem to DateTimeFormat")  \
+  V(harmony_intl_dateformat_day_period,                    \
+    "Add dayPeriod option to DateTimeFormat")              \
+  V(harmony_intl_dateformat_fractional_second_digits,      \
+    "Add fractionalSecondDigits option to DateTimeFormat") \
   V(harmony_intl_segmenter, "Intl.Segmenter")
 #else
 #define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
@@ -235,18 +241,15 @@ DEFINE_IMPLICATION(harmony_import_meta, harmony_dynamic_import)
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")                \
   V(harmony_import_meta, "harmony import.meta property")                   \
   V(harmony_dynamic_import, "harmony dynamic import")                      \
-  V(harmony_global, "harmony global")                                      \
-  V(harmony_object_from_entries, "harmony Object.fromEntries()")           \
-  V(harmony_hashbang, "harmony hashbang syntax")                           \
-  V(harmony_numeric_separator, "harmony numeric separator between digits") \
   V(harmony_promise_all_settled, "harmony Promise.allSettled")
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_SHIPPING(V)                                       \
-  HARMONY_SHIPPING_BASE(V)                                        \
-  V(harmony_intl_bigint, "BigInt.prototype.toLocaleString")       \
-  V(harmony_intl_date_format_range, "DateTimeFormat formatRange") \
-  V(harmony_intl_datetime_style, "dateStyle timeStyle for DateTimeFormat")
+#define HARMONY_SHIPPING(V)                                                \
+  HARMONY_SHIPPING_BASE(V)                                                 \
+  V(harmony_intl_bigint, "BigInt.prototype.toLocaleString")                \
+  V(harmony_intl_date_format_range, "DateTimeFormat formatRange")          \
+  V(harmony_intl_datetime_style, "dateStyle timeStyle for DateTimeFormat") \
+  V(harmony_intl_numberformat_unified, "Unified Intl.NumberFormat Features")
 #else
 #define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
 #endif
@@ -283,10 +286,22 @@ DEFINE_BOOL(icu_timezone_data, true, "get information about timezones from ICU")
 #define V8_ENABLE_RAW_HEAP_SNAPSHOTS_BOOL false
 #endif  // V8_ENABLE_RAW_HEAP_SNAPSHOTS
 
+#ifdef V8_ENABLE_DOUBLE_CONST_STORE_CHECK
+#define V8_ENABLE_DOUBLE_CONST_STORE_CHECK_BOOL true
+#else
+#define V8_ENABLE_DOUBLE_CONST_STORE_CHECK_BOOL false
+#endif
+
 #ifdef V8_LITE_MODE
 #define V8_LITE_BOOL true
 #else
 #define V8_LITE_BOOL false
+#endif
+
+#ifdef V8_ENABLE_LAZY_SOURCE_POSITIONS
+#define V8_LAZY_SOURCE_POSITIONS_BOOL true
+#else
+#define V8_LAZY_SOURCE_POSITIONS_BOOL false
 #endif
 
 DEFINE_BOOL(lite_mode, V8_LITE_BOOL,
@@ -295,8 +310,34 @@ DEFINE_BOOL(lite_mode, V8_LITE_BOOL,
 // Lite mode implies other flags to trade-off performance for memory.
 DEFINE_IMPLICATION(lite_mode, jitless)
 DEFINE_IMPLICATION(lite_mode, lazy_feedback_allocation)
-DEFINE_IMPLICATION(lite_mode, enable_lazy_source_positions)
 DEFINE_IMPLICATION(lite_mode, optimize_for_size)
+
+#ifdef V8_DISABLE_WRITE_BARRIERS
+#define V8_DISABLE_WRITE_BARRIERS_BOOL true
+#else
+#define V8_DISABLE_WRITE_BARRIERS_BOOL false
+#endif
+
+DEFINE_BOOL_READONLY(disable_write_barriers, V8_DISABLE_WRITE_BARRIERS_BOOL,
+                     "disable write barriers when GC is non-incremental "
+                     "and heap contains single generation.")
+
+// Disable incremental marking barriers
+DEFINE_NEG_IMPLICATION(disable_write_barriers, incremental_marking)
+
+#ifdef V8_ENABLE_SINGLE_GENERATION
+#define V8_GENERATION_BOOL true
+#else
+#define V8_GENERATION_BOOL false
+#endif
+
+DEFINE_BOOL_READONLY(
+    single_generation, V8_GENERATION_BOOL,
+    "allocate all objects from young generation to old generation")
+
+// Prevent inline allocation into new space
+DEFINE_NEG_IMPLICATION(single_generation, inline_new)
+DEFINE_NEG_IMPLICATION(single_generation, turbo_allocation_folding)
 
 #ifdef V8_ENABLE_FUTURE
 #define FUTURE_BOOL true
@@ -308,6 +349,9 @@ DEFINE_BOOL(future, FUTURE_BOOL,
             "not-too-far future")
 
 DEFINE_IMPLICATION(future, write_protect_code_memory)
+
+DEFINE_BOOL(assert_types, false,
+            "generate runtime type assertions to test the typer")
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
@@ -331,6 +375,8 @@ DEFINE_IMPLICATION(track_field_types, track_fields)
 DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
 DEFINE_BOOL(trace_block_coverage, false,
             "trace collected block coverage information")
+DEFINE_BOOL(trace_protector_invalidation, false,
+            "trace protector cell invalidations")
 DEFINE_BOOL(feedback_normalization, false,
             "feed back normalization to constructors")
 // TODO(jkummerow): This currently adds too much load on the stub cache.
@@ -382,8 +428,7 @@ DEFINE_BOOL(use_ic, true, "use inline caching")
 DEFINE_INT(budget_for_feedback_vector_allocation, 1 * KB,
            "The budget in amount of bytecode executed by a function before we "
            "decide to allocate feedback vectors")
-DEFINE_BOOL(lazy_feedback_allocation, false, "Allocate feedback vectors lazily")
-DEFINE_IMPLICATION(future, lazy_feedback_allocation)
+DEFINE_BOOL(lazy_feedback_allocation, true, "Allocate feedback vectors lazily")
 
 // Flags for Ignition.
 DEFINE_BOOL(ignition_elide_noneffectful_bytecodes, true,
@@ -396,9 +441,11 @@ DEFINE_BOOL(ignition_share_named_property_feedback, true,
             "the same object")
 DEFINE_BOOL(print_bytecode, false,
             "print bytecode generated by ignition interpreter")
-DEFINE_BOOL(enable_lazy_source_positions, false,
+DEFINE_BOOL(enable_lazy_source_positions, V8_LAZY_SOURCE_POSITIONS_BOOL,
             "skip generating source positions during initial compile but "
             "regenerate when actually required")
+DEFINE_BOOL(stress_lazy_source_positions, false,
+            "collect lazy source positions immediately after lazy compile")
 DEFINE_STRING(print_bytecode_filter, "*",
               "filter for selecting which functions to print bytecode")
 #ifdef V8_TRACE_IGNITION
@@ -476,7 +523,7 @@ DEFINE_BOOL(trace_turbo_trimming, false, "trace TurboFan's graph trimmer")
 DEFINE_BOOL(trace_turbo_jt, false, "trace TurboFan's jump threading")
 DEFINE_BOOL(trace_turbo_ceq, false, "trace TurboFan's control equivalence")
 DEFINE_BOOL(trace_turbo_loop, false, "trace TurboFan's loop optimizations")
-DEFINE_BOOL(trace_alloc, false, "trace register allocator")
+DEFINE_BOOL(trace_turbo_alloc, false, "trace TurboFan's register allocator")
 DEFINE_BOOL(trace_all_uses, false, "trace all use positions")
 DEFINE_BOOL(trace_representation, false, "trace representation types")
 DEFINE_BOOL(turbo_verify, DEBUG_BOOL, "verify TurboFan graphs at each phase")
@@ -662,13 +709,11 @@ DEFINE_STRING(dump_wasm_module_path, nullptr,
 // for configurability.
 #include "src/wasm/wasm-feature-flags.h"
 
-#define SPACE
 #define DECL_WASM_FLAG(feat, desc, val)      \
   DEFINE_BOOL(experimental_wasm_##feat, val, \
               "enable prototype " desc " for wasm")
-FOREACH_WASM_FEATURE_FLAG(DECL_WASM_FLAG, SPACE)
+FOREACH_WASM_FEATURE_FLAG(DECL_WASM_FLAG)
 #undef DECL_WASM_FLAG
-#undef SPACE
 
 DEFINE_BOOL(wasm_opt, false, "enable wasm optimization")
 DEFINE_BOOL(wasm_no_bounds_checks, false,
@@ -709,8 +754,7 @@ DEFINE_BOOL(wasm_lazy_validation, false,
 DEFINE_NEG_IMPLICATION(wasm_interpret_all, asm_wasm_lazy_compilation)
 DEFINE_NEG_IMPLICATION(wasm_interpret_all, wasm_lazy_compilation)
 DEFINE_NEG_IMPLICATION(wasm_interpret_all, wasm_tier_up)
-DEFINE_BOOL(wasm_code_gc, false, "enable garbage collection of wasm code")
-DEFINE_IMPLICATION(future, wasm_code_gc)
+DEFINE_BOOL(wasm_code_gc, true, "enable garbage collection of wasm code")
 DEFINE_BOOL(trace_wasm_code_gc, false, "trace garbage collection of wasm code")
 DEFINE_BOOL(stress_wasm_code_gc, false,
             "stress test garbage collection of wasm code")
@@ -733,11 +777,17 @@ DEFINE_BOOL(experimental_new_space_growth_heuristic, false,
             "Grow the new space based on the percentage of survivors instead "
             "of their absolute value.")
 DEFINE_SIZE_T(max_old_space_size, 0, "max size of the old space (in Mbytes)")
+DEFINE_SIZE_T(
+    max_heap_size, 0,
+    "max size of the heap (in Mbytes) "
+    "both max_semi_space_size and max_old_space_size take precedence. "
+    "All three flags cannot be specified at the same time.")
+DEFINE_SIZE_T(initial_heap_size, 0, "initial size of the heap (in Mbytes)")
 DEFINE_BOOL(huge_max_old_generation_size, false,
             "Increase max size of the old space to 4 GB for x64 systems with"
             "the physical memory bigger than 16 GB")
 DEFINE_SIZE_T(initial_old_space_size, 0, "initial old space size (in Mbytes)")
-DEFINE_BOOL(global_gc_scheduling, false,
+DEFINE_BOOL(global_gc_scheduling, true,
             "enable GC scheduling based on global memory")
 DEFINE_BOOL(gc_global, false, "always perform global GCs")
 DEFINE_INT(random_gc_interval, 0,
@@ -760,6 +810,22 @@ DEFINE_BOOL(trace_idle_notification_verbose, false,
 DEFINE_BOOL(trace_gc_verbose, false,
             "print more details following each garbage collection")
 DEFINE_IMPLICATION(trace_gc_verbose, trace_gc)
+DEFINE_BOOL(trace_gc_freelists, false,
+            "prints details of each freelist before and after "
+            "each major garbage collection")
+DEFINE_BOOL(trace_gc_freelists_verbose, false,
+            "prints details of freelists of each page before and after "
+            "each major garbage collection")
+DEFINE_IMPLICATION(trace_gc_freelists_verbose, trace_gc_freelists)
+DEFINE_BOOL(trace_evacuation_candidates, false,
+            "Show statistics about the pages evacuation by the compaction")
+DEFINE_BOOL(
+    trace_allocations_origins, false,
+    "Show statistics about the origins of allocations. "
+    "Combine with --no-inline-new to track allocations from generated code")
+DEFINE_INT(gc_freelist_strategy, 0,
+           "Freelist strategy to use: "
+           "1=FreeListFastAlloc. 2=FreeListMany. Anything else=FreeListLegacy")
 
 DEFINE_INT(trace_allocation_stack_interval, -1,
            "print stack trace after <n> free-list allocations")
@@ -910,6 +976,8 @@ DEFINE_BOOL(enable_sse3, true, "enable use of SSE3 instructions if available")
 DEFINE_BOOL(enable_ssse3, true, "enable use of SSSE3 instructions if available")
 DEFINE_BOOL(enable_sse4_1, true,
             "enable use of SSE4.1 instructions if available")
+DEFINE_BOOL(enable_sse4_2, true,
+            "enable use of SSE4.2 instructions if available")
 DEFINE_BOOL(enable_sahf, true,
             "enable use of SAHF instruction if available (X64 only)")
 DEFINE_BOOL(enable_avx, true, "enable use of AVX instructions if available")
@@ -967,6 +1035,8 @@ DEFINE_BOOL(experimental_stack_trace_frames, false,
 DEFINE_BOOL(disallow_code_generation_from_strings, false,
             "disallow eval and friends")
 DEFINE_BOOL(expose_async_hooks, false, "expose async_hooks object")
+DEFINE_STRING(expose_cputracemark_as, nullptr,
+              "expose cputracemark extension under the specified name")
 
 // builtins.cc
 DEFINE_BOOL(allow_unsafe_function_constructor, false,
@@ -1175,6 +1245,9 @@ DEFINE_UINT(serialization_chunk_size, 4096,
 DEFINE_BOOL(regexp_optimization, true, "generate optimized regexp code")
 DEFINE_BOOL(regexp_mode_modifiers, false, "enable inline flags in regexp.")
 DEFINE_BOOL(regexp_interpret_all, false, "interpret all regexp code")
+DEFINE_BOOL(regexp_tier_up, false,
+            "enable regexp interpreter and tier up to the compiler")
+DEFINE_NEG_IMPLICATION(regexp_interpret_all, regexp_tier_up)
 
 // Testing flags test/cctest/test-{flags,api,serialization}.cc
 DEFINE_BOOL(testing_bool_flag, true, "testing_bool_flag")
@@ -1183,6 +1256,12 @@ DEFINE_INT(testing_int_flag, 13, "testing_int_flag")
 DEFINE_FLOAT(testing_float_flag, 2.5, "float-flag")
 DEFINE_STRING(testing_string_flag, "Hello, world!", "string-flag")
 DEFINE_INT(testing_prng_seed, 42, "Seed used for threading test randomness")
+
+// Test flag for a check in %OptimizeFunctionOnNextCall
+DEFINE_BOOL(
+    testing_d8_test_runner, false,
+    "test runner turns on this flag to enable a check that the funciton was "
+    "prepared for optimization before marking it for optimization")
 
 // mksnapshot.cc
 DEFINE_STRING(embedded_src, nullptr,
@@ -1307,6 +1386,7 @@ DEFINE_BOOL(trace_regexp_bytecodes, false, "trace regexp bytecode execution")
 DEFINE_BOOL(trace_regexp_assembler, false,
             "trace regexp macro assembler calls.")
 DEFINE_BOOL(trace_regexp_parser, false, "trace regexp parsing")
+DEFINE_BOOL(trace_regexp_tier_up, false, "trace regexp tiering up execution")
 
 // Debugger
 DEFINE_BOOL(print_break_location, false, "print source location on debug break")

@@ -37,13 +37,13 @@ class JSRegExp : public JSObject {
   // IRREGEXP: Compiled with Irregexp.
   enum Type { NOT_COMPILED, ATOM, IRREGEXP };
   struct FlagShiftBit {
-    static const int kGlobal = 0;
-    static const int kIgnoreCase = 1;
-    static const int kMultiline = 2;
-    static const int kSticky = 3;
-    static const int kUnicode = 4;
-    static const int kDotAll = 5;
-    static const int kInvalid = 7;
+    static constexpr int kGlobal = 0;
+    static constexpr int kIgnoreCase = 1;
+    static constexpr int kMultiline = 2;
+    static constexpr int kSticky = 3;
+    static constexpr int kUnicode = 4;
+    static constexpr int kDotAll = 5;
+    static constexpr int kInvalid = 6;
   };
   enum Flag : uint8_t {
     kNone = 0,
@@ -57,27 +57,30 @@ class JSRegExp : public JSObject {
     kInvalid = 1 << FlagShiftBit::kInvalid,  // Not included in FlagCount.
   };
   using Flags = base::Flags<Flag>;
-  static constexpr int FlagCount() { return 6; }
 
-  static int FlagShiftBits(Flag flag) {
-    switch (flag) {
-      case kGlobal:
-        return FlagShiftBit::kGlobal;
-      case kIgnoreCase:
-        return FlagShiftBit::kIgnoreCase;
-      case kMultiline:
-        return FlagShiftBit::kMultiline;
-      case kSticky:
-        return FlagShiftBit::kSticky;
-      case kUnicode:
-        return FlagShiftBit::kUnicode;
-      case kDotAll:
-        return FlagShiftBit::kDotAll;
-      default:
-        STATIC_ASSERT(FlagCount() == 6);
-        UNREACHABLE();
-    }
+  static constexpr int kFlagCount = 6;
+
+  static constexpr Flag FlagFromChar(char c) {
+    STATIC_ASSERT(kFlagCount == 6);
+    // clang-format off
+    return c == 'g' ? kGlobal
+         : c == 'i' ? kIgnoreCase
+         : c == 'm' ? kMultiline
+         : c == 'y' ? kSticky
+         : c == 'u' ? kUnicode
+         : c == 's' ? kDotAll
+         : kInvalid;
+    // clang-format on
   }
+
+  STATIC_ASSERT(static_cast<int>(kNone) == v8::RegExp::kNone);
+  STATIC_ASSERT(static_cast<int>(kGlobal) == v8::RegExp::kGlobal);
+  STATIC_ASSERT(static_cast<int>(kIgnoreCase) == v8::RegExp::kIgnoreCase);
+  STATIC_ASSERT(static_cast<int>(kMultiline) == v8::RegExp::kMultiline);
+  STATIC_ASSERT(static_cast<int>(kSticky) == v8::RegExp::kSticky);
+  STATIC_ASSERT(static_cast<int>(kUnicode) == v8::RegExp::kUnicode);
+  STATIC_ASSERT(static_cast<int>(kDotAll) == v8::RegExp::kDotAll);
+  STATIC_ASSERT(kFlagCount == v8::RegExp::kFlagCount);
 
   DECL_ACCESSORS(data, Object)
   DECL_ACCESSORS(flags, Object)
@@ -94,6 +97,10 @@ class JSRegExp : public JSObject {
   static MaybeHandle<JSRegExp> Initialize(Handle<JSRegExp> regexp,
                                           Handle<String> source,
                                           Handle<String> flags_string);
+
+  bool MarkedForTierUp();
+  void ResetTierUp();
+  void MarkTierUpForNextExec();
 
   inline Type TypeTag() const;
   // Number of captures (without the match itself).
@@ -113,6 +120,9 @@ class JSRegExp : public JSObject {
     }
   }
 
+  // This could be a Smi kUninitializedValue, a ByteArray, or Code.
+  Object Code(bool is_latin1) const;
+  bool ShouldProduceBytecode();
   inline bool HasCompiledCode() const;
   inline void DiscardCompiledCodeForSerialization();
 
@@ -157,8 +167,9 @@ class JSRegExp : public JSObject {
   // Maps names of named capture groups (at indices 2i) to their corresponding
   // (1-based) capture group indices (at indices 2i + 1).
   static const int kIrregexpCaptureNameMapIndex = kDataIndex + 4;
+  static const int kIrregexpTierUpTicksIndex = kDataIndex + 5;
 
-  static const int kIrregexpDataSize = kIrregexpCaptureNameMapIndex + 1;
+  static const int kIrregexpDataSize = kIrregexpTierUpTicksIndex + 1;
 
   // In-object fields.
   static const int kLastIndexFieldIndex = 0;

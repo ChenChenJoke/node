@@ -62,7 +62,7 @@ class V8_EXPORT_PRIVATE WasmEngine {
   MaybeHandle<AsmWasmData> SyncCompileTranslatedAsmJs(
       Isolate* isolate, ErrorThrower* thrower, const ModuleWireBytes& bytes,
       Vector<const byte> asm_js_offset_table_bytes,
-      Handle<HeapNumber> uses_bitset);
+      Handle<HeapNumber> uses_bitset, LanguageMode language_mode);
   Handle<WasmModuleObject> FinalizeTranslatedAsmJs(
       Isolate* isolate, Handle<AsmWasmData> asm_wasm_data,
       Handle<Script> script);
@@ -140,6 +140,11 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // Isolate is currently running.
   bool HasRunningCompileJob(Isolate* isolate);
 
+  // Deletes all AsyncCompileJobs that belong to the given context. All
+  // compilation is aborted, no more callbacks will be triggered. This is used
+  // when a context is disposed, e.g. because of browser navigation.
+  void DeleteCompileJobsOnContext(Handle<Context> context);
+
   // Deletes all AsyncCompileJobs that belong to the given Isolate. All
   // compilation is aborted, no more callbacks will be triggered. This is used
   // for tearing down an isolate, or to clean it up to be reused.
@@ -175,6 +180,9 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // is determined with a heuristic based on the total size of wasm
   // code. The native module may later request more memory.
   // TODO(titzer): isolate is only required here for CompilationState.
+  std::shared_ptr<NativeModule> NewNativeModule(
+      Isolate* isolate, const WasmFeatures& enabled_features,
+      std::shared_ptr<const WasmModule> module);
   std::shared_ptr<NativeModule> NewNativeModule(
       Isolate* isolate, const WasmFeatures& enabled_features,
       size_t code_size_estimate, bool can_request_more,

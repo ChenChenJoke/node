@@ -342,6 +342,9 @@ void CallPrinter::VisitAwait(Await* node) { Find(node->expression()); }
 
 void CallPrinter::VisitThrow(Throw* node) { Find(node->exception()); }
 
+void CallPrinter::VisitOptionalChain(OptionalChain* node) {
+  Find(node->expression());
+}
 
 void CallPrinter::VisitProperty(Property* node) {
   Expression* key = node->key();
@@ -349,12 +352,18 @@ void CallPrinter::VisitProperty(Property* node) {
   if (literal != nullptr &&
       literal->BuildValue(isolate_)->IsInternalizedString()) {
     Find(node->obj(), true);
+    if (node->is_optional_chain_link()) {
+      Print("?");
+    }
     Print(".");
     // TODO(adamk): Teach Literal how to print its values without
     // allocating on the heap.
     PrintLiteral(literal->BuildValue(isolate_), false);
   } else {
     Find(node->obj(), true);
+    if (node->is_optional_chain_link()) {
+      Print("?.");
+    }
     Print("[");
     Find(key, true);
     Print("]");
@@ -1272,20 +1281,47 @@ void AstPrinter::VisitThrow(Throw* node) {
   Visit(node->exception());
 }
 
+void AstPrinter::VisitOptionalChain(OptionalChain* node) {
+  IndentedScope indent(this, "OPTIONAL_CHAIN", node->position());
+  Visit(node->expression());
+}
+
 void AstPrinter::VisitProperty(Property* node) {
   EmbeddedVector<char, 128> buf;
   SNPrintF(buf, "PROPERTY");
   IndentedScope indent(this, buf.begin(), node->position());
 
   Visit(node->obj());
-  AssignType property_kind = Property::GetAssignType(node);
-  if (property_kind == NAMED_PROPERTY ||
-      property_kind == NAMED_SUPER_PROPERTY) {
-    PrintLiteralIndented("NAME", node->key()->AsLiteral(), false);
-  } else {
-    DCHECK(property_kind == KEYED_PROPERTY ||
-           property_kind == KEYED_SUPER_PROPERTY);
-    PrintIndentedVisit("KEY", node->key());
+  AssignType type = Property::GetAssignType(node);
+  switch (type) {
+    case NAMED_PROPERTY:
+    case NAMED_SUPER_PROPERTY: {
+      PrintLiteralIndented("NAME", node->key()->AsLiteral(), false);
+      break;
+    }
+    case PRIVATE_METHOD: {
+      PrintIndentedVisit("PRIVATE_METHOD", node->key());
+      break;
+    }
+    case PRIVATE_GETTER_ONLY: {
+      PrintIndentedVisit("PRIVATE_GETTER_ONLY", node->key());
+      break;
+    }
+    case PRIVATE_SETTER_ONLY: {
+      PrintIndentedVisit("PRIVATE_SETTER_ONLY", node->key());
+      break;
+    }
+    case PRIVATE_GETTER_AND_SETTER: {
+      PrintIndentedVisit("PRIVATE_GETTER_AND_SETTER", node->key());
+      break;
+    }
+    case KEYED_PROPERTY:
+    case KEYED_SUPER_PROPERTY: {
+      PrintIndentedVisit("KEY", node->key());
+      break;
+    }
+    case NON_PROPERTY:
+      UNREACHABLE();
   }
 }
 

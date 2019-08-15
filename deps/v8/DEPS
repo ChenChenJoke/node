@@ -12,10 +12,10 @@ vars = {
   'check_v8_header_includes': False,
 
   # GN CIPD package version.
-  'gn_version': 'git_revision:81ee1967d3fcbc829bac1c005c3da59739c88df9',
+  'gn_version': 'git_revision:152c5144ceed9592c20f0c8fd55769646077569b',
 
   # luci-go CIPD package version.
-  'luci_go': 'git_revision:25958d48e89e980e2a97daeddc977fb5e2e1fb8c',
+  'luci_go': 'git_revision:7d11fd9e66407c49cb6c8546a2ae45ea993a240c',
 
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_build-tools_version
@@ -24,11 +24,11 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_emulator_version
   # and whatever else without interference from each other.
-  'android_sdk_emulator_version': 'ki7EDQRAiZAUYlnTWR1XmI6cJTk65fJ-DNZUU1zrtS8C',
+  'android_sdk_emulator_version': 'xhyuoquVvBTcJelgRjMKZeoBVSQRjB7pLVJPt5C9saIC',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_extras_version
   # and whatever else without interference from each other.
-  'android_sdk_extras_version': 'iIwhhDox5E-mHgwUhCz8JACWQCpUjdqt5KTY9VLugKQC',
+  'android_sdk_extras_version': 'ppQ4TnqDvBHQ3lXx5KPq97egzF5X2FFyOrVHkGmiTMQC',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_patcher_version
   # and whatever else without interference from each other.
@@ -36,7 +36,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_platform-tools_version
   # and whatever else without interference from each other.
-  'android_sdk_platform-tools_version': '4Y2Cb2LGzoc-qt-oIUIlhySotJaKeE3ELFedSVe6Uk8C',
+  'android_sdk_platform-tools_version': 'MSnxgXN7IurL-MQs1RrTkSFSb8Xd1UtZjLArI8Ty1FgC',
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling android_sdk_platforms_version
   # and whatever else without interference from each other.
@@ -57,15 +57,15 @@ vars = {
 
 deps = {
   'v8/build':
-    Var('chromium_url') + '/chromium/src/build.git' + '@' + '4cebfa34c79bcfbce6a3f55d1b4f7628bb70ea8a',
+    Var('chromium_url') + '/chromium/src/build.git' + '@' + '1bf9025a3839e89c810ef05bf186547ba4bd3294',
   'v8/third_party/depot_tools':
-    Var('chromium_url') + '/chromium/tools/depot_tools.git' + '@' + '26af0d34d281440ad0dc6d2e43fe60f32ef62da0',
+    Var('chromium_url') + '/chromium/tools/depot_tools.git' + '@' + '979fa780ce2f41fe9a3d89d74d9e8e69f88cd71d',
   'v8/third_party/icu':
-    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + '64e5d7d43a1ff205e3787ab6150bbc1a1837332b',
+    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + '9a5af81f58a2bc2ea7a887505e38b50021496194',
   'v8/third_party/instrumented_libraries':
-    Var('chromium_url') + '/chromium/src/third_party/instrumented_libraries.git' + '@' + 'a959e4f0cb643003f2d75d179cede449979e3e77',
+    Var('chromium_url') + '/chromium/src/third_party/instrumented_libraries.git' + '@' + 'b1c3ca20848c117eb935b02c25d441f03e6fbc5e',
   'v8/buildtools':
-    Var('chromium_url') + '/chromium/src/buildtools.git' + '@' + '0218c0f9ac9fdba00e5c27b5aca94d3a64c74f34',
+    Var('chromium_url') + '/chromium/src/buildtools.git' + '@' + '74cfb57006f83cfe050817526db359d5c8a11628',
   'v8/buildtools/clang_format/script':
     Var('chromium_url') + '/chromium/llvm-project/cfe/tools/clang-format.git' + '@' + '96636aa0e9f047f17447f2d45a094d0b59ed7917',
   'v8/buildtools/linux64': {
@@ -105,14 +105,9 @@ deps = {
     'condition': 'host_os == "win"',
   },
   'v8/base/trace_event/common':
-    Var('chromium_url') + '/chromium/src/base/trace_event/common.git' + '@' + 'cfe8887fa6ac3170e23a68949930e28d4705a16f',
+    Var('chromium_url') + '/chromium/src/base/trace_event/common.git' + '@' + '5e4fce17a9d2439c44a7b57ceecef6df9287ec2f',
   'v8/third_party/android_ndk': {
     'url': Var('chromium_url') + '/android_ndk.git' + '@' + '4e2cea441bfd43f0863d14f57b1e1844260b9884',
-    'condition': 'checkout_android',
-  },
-  # This is deprecated.
-  'v8/third_party/android_tools': {
-    'url': Var('chromium_url') + '/android_tools.git' + '@' + '347a7c8078a009e98995985b7ab6ec6b35696dea',
     'condition': 'checkout_android',
   },
   'v8/third_party/android_sdk/public': {
@@ -158,7 +153,7 @@ deps = {
       'dep_type': 'cipd',
   },
   'v8/third_party/catapult': {
-    'url': Var('chromium_url') + '/catapult.git' + '@' + 'a7b33124672f301cebe0ca94a67ca7d0362e3d6a',
+    'url': Var('chromium_url') + '/catapult.git' + '@' + '942e493326d11faffa51617ad07a82831f9408fe',
     'condition': 'checkout_android',
   },
   'v8/third_party/colorama/src': {
@@ -166,23 +161,23 @@ deps = {
     'condition': 'checkout_android',
   },
   'v8/third_party/fuchsia-sdk': {
-    'url': Var('chromium_url') + '/chromium/src/third_party/fuchsia-sdk.git' + '@' + 'ae68779f84fc36bd88ba4fe0ff78ed9ea3c91d73',
+    'url': Var('chromium_url') + '/chromium/src/third_party/fuchsia-sdk.git' + '@' + '5fd29151cf35c0813c33cc368a7c78389e3f5caa',
     'condition': 'checkout_fuchsia',
   },
   'v8/third_party/googletest/src':
-    Var('chromium_url') + '/external/github.com/google/googletest.git' + '@' + 'f71fb4f9a912ec945401cc49a287a759b6131026',
+    Var('chromium_url') + '/external/github.com/google/googletest.git' + '@' + '90a443f9c2437ca8a682a1ac625eba64e1d74a8a',
   'v8/third_party/jinja2':
     Var('chromium_url') + '/chromium/src/third_party/jinja2.git' + '@' + 'b41863e42637544c2941b574c7877d3e1f663e25',
   'v8/third_party/markupsafe':
     Var('chromium_url') + '/chromium/src/third_party/markupsafe.git' + '@' + '8f45f5cfa0009d2a70589bcda0349b8cb2b72783',
   'v8/tools/swarming_client':
-    Var('chromium_url') + '/infra/luci/client-py.git' + '@' + '779c4f0f8488c64587b75dbb001d18c3c0c4cda9',
+    Var('chromium_url') + '/infra/luci/client-py.git' + '@' + '96f125709acfd0b48fc1e5dae7d6ea42291726ac',
   'v8/test/benchmarks/data':
     Var('chromium_url') + '/v8/deps/third_party/benchmarks.git' + '@' + '05d7188267b4560491ff9155c5ee13e207ecd65f',
   'v8/test/mozilla/data':
     Var('chromium_url') + '/v8/deps/third_party/mozilla-tests.git' + '@' + 'f6c578a10ea707b1a8ab0b88943fe5115ce2b9be',
   'v8/test/test262/data':
-    Var('chromium_url') + '/external/github.com/tc39/test262.git' + '@' + 'a9abd418ccc7999b00b8c7df60b25620a7d3c541',
+    Var('chromium_url') + '/external/github.com/tc39/test262.git' + '@' + '8f3aba3024901a8559ace6f4e3de6b168ac13406',
   'v8/test/test262/harness':
     Var('chromium_url') + '/external/github.com/test262-utils/test262-harness-py.git' + '@' + '4555345a943d0c99a9461182705543fb171dda4b',
   'v8/third_party/qemu-linux-x64': {
@@ -206,7 +201,7 @@ deps = {
       'dep_type': 'cipd',
   },
   'v8/tools/clang':
-    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + 'fe8ba88894e4b3927d3cd9e24274a0f1a688cf71',
+    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + 'a05d5ea8dd772704d0ebd7eb00c0d925c2cbb7ba',
   'v8/tools/luci-go': {
       'packages': [
         {
@@ -236,15 +231,12 @@ deps = {
     'dep_type': 'cipd',
   },
   'v8/test/wasm-js/data':
-    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + 'bc7d3006bbda0de5031c2a1b9266a62fa7895019',
+    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + 'a221f2574d7106e92cf8abaf05d5bb1131b19d76',
   'v8/third_party/perfetto':
-    Var('android_url') + '/platform/external/perfetto.git' + '@' + '10c98fe0cfae669f71610d97e9da94260a6da173',
+    Var('android_url') + '/platform/external/perfetto.git' + '@' + '3150f3961532dccfe18a6c87c9494f754d3b6a51',
   'v8/third_party/protobuf':
     Var('chromium_url') + '/external/github.com/google/protobuf'+ '@' + 'b68a347f56137b4b1a746e8c7438495a6ac1bd91',
 }
-recursedeps = [
-  'v8/third_party/android_tools',
-]
 
 include_rules = [
   # Everybody can use some things.
@@ -417,6 +409,13 @@ hooks = [
     'pattern': '.',
     'condition': 'checkout_win',
     'action': ['python', 'v8/build/vs_toolchain.py', 'update'],
+  },
+  {
+    # Update the Mac toolchain if necessary.
+    'name': 'mac_toolchain',
+    'pattern': '.',
+    'condition': 'checkout_mac',
+    'action': ['python', 'v8/build/mac_toolchain.py'],
   },
   # Pull binutils for linux, enabled debug fission for faster linking /
   # debugging when used with clang on Ubuntu Precise.

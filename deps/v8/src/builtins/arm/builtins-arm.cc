@@ -90,12 +90,24 @@ static void GenerateTailCallToReturnedCode(MacroAssembler* masm,
 
 namespace {
 
+void LoadRealStackLimit(MacroAssembler* masm, Register destination) {
+  DCHECK(masm->root_array_available());
+  Isolate* isolate = masm->isolate();
+  ExternalReference limit = ExternalReference::address_of_real_jslimit(isolate);
+  DCHECK(TurboAssembler::IsAddressableThroughRootRegister(isolate, limit));
+
+  intptr_t offset =
+      TurboAssembler::RootRegisterOffsetForExternalReference(isolate, limit);
+  CHECK(is_int32(offset));
+  __ ldr(destination, MemOperand(kRootRegister, offset));
+}
+
 void Generate_StackOverflowCheck(MacroAssembler* masm, Register num_args,
                                  Register scratch, Label* stack_overflow) {
   // Check the stack for overflow. We are not trying to catch
   // interruptions (e.g. debug break and preemption) here, so the "real stack
   // limit" is checked.
-  __ LoadRoot(scratch, RootIndex::kRealStackLimit);
+  LoadRealStackLimit(masm, scratch);
   // Make scratch the space we have left. The stack might already be overflowed
   // here which will cause scratch to become negative.
   __ sub(scratch, sp, scratch);
@@ -428,7 +440,8 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   // Check the stack for overflow. We are not trying to catch interruptions
   // (i.e. debug break and preemption) here, so check the "real stack limit".
   Label stack_overflow;
-  __ CompareRoot(sp, RootIndex::kRealStackLimit);
+  LoadRealStackLimit(masm, scratch);
+  __ cmp(sp, scratch);
   __ b(lo, &stack_overflow);
 
   // Push receiver.
@@ -1093,11 +1106,11 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   // 8-bit fields next to each other, so we could just optimize by writing a
   // 16-bit. These static asserts guard our assumption is valid.
   STATIC_ASSERT(BytecodeArray::kBytecodeAgeOffset ==
-                BytecodeArray::kOSRNestingLevelOffset + kCharSize);
+                BytecodeArray::kOsrNestingLevelOffset + kCharSize);
   STATIC_ASSERT(BytecodeArray::kNoAgeBytecodeAge == 0);
   __ mov(r9, Operand(0));
   __ strh(r9, FieldMemOperand(kInterpreterBytecodeArrayRegister,
-                              BytecodeArray::kOSRNestingLevelOffset));
+                              BytecodeArray::kOsrNestingLevelOffset));
 
   // Load the initial bytecode offset.
   __ mov(kInterpreterBytecodeOffsetRegister,
@@ -1116,7 +1129,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
     // Do a stack check to ensure we don't go over the limit.
     Label ok;
     __ sub(r9, sp, Operand(r4));
-    __ LoadRoot(r2, RootIndex::kRealStackLimit);
+    LoadRealStackLimit(masm, r2);
     __ cmp(r9, Operand(r2));
     __ b(hs, &ok);
     __ CallRuntime(Runtime::kThrowStackOverflow);
@@ -1509,13 +1522,16 @@ void Generate_ContinueToBuiltinHelper(MacroAssembler* masm,
   __ ldr(fp, MemOperand(
                  sp, BuiltinContinuationFrameConstants::kFixedFrameSizeFromFp));
 
+  // Load builtin index (stored as a Smi) and use it to get the builtin start
+  // address from the builtins table.
   UseScratchRegisterScope temps(masm);
-  Register scratch = temps.Acquire();
-  __ Pop(scratch);
+  Register builtin = temps.Acquire();
+  __ Pop(builtin);
   __ add(sp, sp,
          Operand(BuiltinContinuationFrameConstants::kFixedFrameSizeFromFp));
   __ Pop(lr);
-  __ add(pc, scratch, Operand(Code::kHeaderSize - kHeapObjectTag));
+  __ LoadEntryFromBuiltinIndex(builtin);
+  __ bx(builtin);
 }
 }  // namespace
 
@@ -2086,7 +2102,7 @@ void Generate_PushBoundArguments(MacroAssembler* masm) {
 
         // Compute the space we have left. The stack might already be overflowed
         // here which will cause remaining_stack_size to become negative.
-        __ LoadRoot(remaining_stack_size, RootIndex::kRealStackLimit);
+        LoadRealStackLimit(masm, remaining_stack_size);
         __ sub(remaining_stack_size, sp, remaining_stack_size);
 
         // Check if the arguments will overflow the stack.
@@ -2514,7 +2530,10 @@ void Builtins::Generate_WasmCompileLazy(MacroAssembler* masm) {
     __ push(kWasmCompileLazyFuncIndexRegister);
     // Load the correct CEntry builtin from the instance object.
     __ ldr(r2, FieldMemOperand(kWasmInstanceRegister,
-                               WasmInstanceObject::kCEntryStubOffset));
+                               WasmInstanceObject::kIsolateRootOffset));
+    auto centry_id =
+        Builtins::kCEntry_Return1_DontSaveFPRegs_ArgvOnStack_NoBuiltinExit;
+    __ ldr(r2, MemOperand(r2, IsolateData::builtin_slot_offset(centry_id)));
     // Initialize the JavaScript context with 0. CEntry will use it to
     // set the current context on the isolate.
     __ Move(cp, Smi::zero());
@@ -2577,7 +2596,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
       __ tst(sp, Operand(frame_alignment_mask));
       __ b(eq, &alignment_as_expected);
       // Don't use Check here, as it will call Runtime_Abort re-entering here.
-      __ stop("Unexpected alignment");
+      __ stop();
       __ bind(&alignment_as_expected);
     }
   }
@@ -2606,7 +2625,7 @@ void Builtins::Generate_CEntry(MacroAssembler* masm, int result_size,
     __ CompareRoot(r3, RootIndex::kTheHoleValue);
     // Cannot use check here as it attempts to generate call into runtime.
     __ b(eq, &okay);
-    __ stop("Unexpected pending exception");
+    __ stop();
     __ bind(&okay);
   }
 
@@ -2835,19 +2854,25 @@ void CallApiFunctionAndReturn(MacroAssembler* masm, Register function_address,
 
   DCHECK(function_address == r1 || function_address == r2);
 
-  Label profiler_disabled;
-  Label end_profiler_check;
+  Label profiler_enabled, end_profiler_check;
   __ Move(r9, ExternalReference::is_profiling_address(isolate));
   __ ldrb(r9, MemOperand(r9, 0));
   __ cmp(r9, Operand(0));
-  __ b(eq, &profiler_disabled);
-
-  // Additional parameter is the address of the actual callback.
-  __ Move(r3, thunk_ref);
-  __ jmp(&end_profiler_check);
-
-  __ bind(&profiler_disabled);
-  __ Move(r3, function_address);
+  __ b(ne, &profiler_enabled);
+  __ Move(r9, ExternalReference::address_of_runtime_stats_flag());
+  __ ldr(r9, MemOperand(r9, 0));
+  __ cmp(r9, Operand(0));
+  __ b(ne, &profiler_enabled);
+  {
+    // Call the api function directly.
+    __ Move(r3, function_address);
+    __ b(&end_profiler_check);
+  }
+  __ bind(&profiler_enabled);
+  {
+    // Additional parameter is the address of the actual callback.
+    __ Move(r3, thunk_ref);
+  }
   __ bind(&end_profiler_check);
 
   // Allocate HandleScope in callee-save registers.

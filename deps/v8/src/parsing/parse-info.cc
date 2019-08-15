@@ -62,7 +62,7 @@ ParseInfo::ParseInfo(Isolate* isolate, AccountingAllocator* zone_allocator)
   set_allow_natives_syntax(FLAG_allow_natives_syntax);
   set_allow_harmony_dynamic_import(FLAG_harmony_dynamic_import);
   set_allow_harmony_import_meta(FLAG_harmony_import_meta);
-  set_allow_harmony_numeric_separator(FLAG_harmony_numeric_separator);
+  set_allow_harmony_optional_chaining(FLAG_harmony_optional_chaining);
   set_allow_harmony_private_methods(FLAG_harmony_private_methods);
 }
 
@@ -97,7 +97,7 @@ ParseInfo::ParseInfo(Isolate* isolate, Handle<SharedFunctionInfo> shared)
 
   set_start_position(shared->StartPosition());
   set_end_position(shared->EndPosition());
-  function_literal_id_ = shared->FunctionLiteralId(isolate);
+  function_literal_id_ = shared->function_literal_id();
   SetFunctionInfo(shared);
 
   Handle<Script> script(Script::cast(shared->script()), isolate);

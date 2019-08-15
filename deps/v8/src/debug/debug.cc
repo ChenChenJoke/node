@@ -15,6 +15,7 @@
 #include "src/codegen/compilation-cache.h"
 #include "src/codegen/compiler.h"
 #include "src/common/globals.h"
+#include "src/common/message-template.h"
 #include "src/debug/debug-evaluate.h"
 #include "src/debug/liveedit.h"
 #include "src/deoptimizer/deoptimizer.h"
@@ -22,7 +23,6 @@
 #include "src/execution/execution.h"
 #include "src/execution/frames-inl.h"
 #include "src/execution/isolate-inl.h"
-#include "src/execution/message-template.h"
 #include "src/execution/v8threads.h"
 #include "src/handles/global-handles.h"
 #include "src/heap/heap-inl.h"  // For NextDebuggingId.
@@ -336,7 +336,7 @@ void DebugFeatureTracker::Track(DebugFeatureTracker::Feature feature) {
 
 // Threading support.
 void Debug::ThreadInit() {
-  thread_local_.break_frame_id_ = StackFrame::NO_ID;
+  thread_local_.break_frame_id_ = StackFrameId::NO_ID;
   thread_local_.last_step_action_ = StepNone;
   thread_local_.last_statement_position_ = kNoSourcePosition;
   thread_local_.last_frame_count_ = -1;
@@ -960,9 +960,9 @@ void Debug::PrepareStep(StepAction step_action) {
   // any. The debug frame will only be present if execution was stopped due to
   // hitting a break point. In other situations (e.g. unhandled exception) the
   // debug frame is not present.
-  StackFrame::Id frame_id = break_frame_id();
+  StackFrameId frame_id = break_frame_id();
   // If there is no JavaScript stack don't do anything.
-  if (frame_id == StackFrame::NO_ID) return;
+  if (frame_id == StackFrameId::NO_ID) return;
 
   feature_tracker()->Track(DebugFeatureTracker::kStepping);
 
@@ -1224,11 +1224,15 @@ void Debug::InstallDebugBreakTrampoline() {
 
   Handle<Code> trampoline = BUILTIN_CODE(isolate_, DebugBreakTrampoline);
   std::vector<Handle<JSFunction>> needs_compile;
-  std::vector<Handle<AccessorPair>> needs_instantiate;
+  using AccessorPairWithContext =
+      std::pair<Handle<AccessorPair>, Handle<NativeContext>>;
+  std::vector<AccessorPairWithContext> needs_instantiate;
   {
-    HeapIterator iterator(isolate_->heap());
-    for (HeapObject obj = iterator.next(); !obj.is_null();
-         obj = iterator.next()) {
+    // Deduplicate {needs_instantiate} by recording all collected AccessorPairs.
+    std::set<AccessorPair> recorded;
+    HeapObjectIterator iterator(isolate_->heap());
+    for (HeapObject obj = iterator.Next(); !obj.is_null();
+         obj = iterator.Next()) {
       if (needs_to_clear_ic && obj.IsFeedbackVector()) {
         FeedbackVector::cast(obj).ClearSlots(isolate_);
         continue;
@@ -1242,11 +1246,26 @@ void Debug::InstallDebugBreakTrampoline() {
         } else {
           fun.set_code(*trampoline);
         }
-      } else if (obj.IsAccessorPair()) {
-        AccessorPair accessor_pair = AccessorPair::cast(obj);
-        if (accessor_pair.getter().IsFunctionTemplateInfo() ||
-            accessor_pair.setter().IsFunctionTemplateInfo()) {
-          needs_instantiate.push_back(handle(accessor_pair, isolate_));
+      } else if (obj.IsJSObject()) {
+        JSObject object = JSObject::cast(obj);
+        DescriptorArray descriptors = object.map().instance_descriptors();
+
+        for (int i = 0; i < object.map().NumberOfOwnDescriptors(); ++i) {
+          if (descriptors.GetDetails(i).kind() == PropertyKind::kAccessor) {
+            Object value = descriptors.GetStrongValue(i);
+            if (!value.IsAccessorPair()) continue;
+
+            AccessorPair accessor_pair = AccessorPair::cast(value);
+            if (!accessor_pair.getter().IsFunctionTemplateInfo() &&
+                !accessor_pair.setter().IsFunctionTemplateInfo()) {
+              continue;
+            }
+            if (recorded.find(accessor_pair) != recorded.end()) continue;
+
+            needs_instantiate.emplace_back(handle(accessor_pair, isolate_),
+                                           object.GetCreationContext());
+            recorded.insert(accessor_pair);
+          }
         }
       }
     }
@@ -1254,10 +1273,13 @@ void Debug::InstallDebugBreakTrampoline() {
 
   // Forcibly instantiate all lazy accessor pairs to make sure that they
   // properly hit the debug break trampoline.
-  for (Handle<AccessorPair> accessor_pair : needs_instantiate) {
+  for (AccessorPairWithContext tuple : needs_instantiate) {
+    Handle<AccessorPair> accessor_pair = tuple.first;
+    Handle<NativeContext> native_context = tuple.second;
     if (accessor_pair->getter().IsFunctionTemplateInfo()) {
       Handle<JSFunction> fun =
           ApiNatives::InstantiateFunction(
+              isolate_, native_context,
               handle(FunctionTemplateInfo::cast(accessor_pair->getter()),
                      isolate_))
               .ToHandleChecked();
@@ -1266,6 +1288,7 @@ void Debug::InstallDebugBreakTrampoline() {
     if (accessor_pair->setter().IsFunctionTemplateInfo()) {
       Handle<JSFunction> fun =
           ApiNatives::InstantiateFunction(
+              isolate_, native_context,
               handle(FunctionTemplateInfo::cast(accessor_pair->setter()),
                      isolate_))
               .ToHandleChecked();
@@ -1649,7 +1672,7 @@ void Debug::ScheduleFrameRestart(StackFrame* frame) {
 
   // Reset break frame ID to the frame below the restarted frame.
   StackTraceFrameIterator it(isolate_);
-  thread_local_.break_frame_id_ = StackFrame::NO_ID;
+  thread_local_.break_frame_id_ = StackFrameId::NO_ID;
   for (StackTraceFrameIterator it(isolate_); !it.done(); it.Advance()) {
     if (it.frame()->fp() > thread_local_.restart_fp_) {
       thread_local_.break_frame_id_ = it.frame()->id();
@@ -1913,7 +1936,7 @@ void Debug::ProcessCompileEvent(bool has_compile_error, Handle<Script> script) {
 
 int Debug::CurrentFrameCount() {
   StackTraceFrameIterator it(isolate_);
-  if (break_frame_id() != StackFrame::NO_ID) {
+  if (break_frame_id() != StackFrameId::NO_ID) {
     // Skip to break frame.
     DCHECK(in_debug_scope());
     while (!it.done() && it.frame()->id() != break_frame_id()) it.Advance();
@@ -2058,7 +2081,7 @@ DebugScope::DebugScope(Debug* debug)
   StackTraceFrameIterator it(isolate());
   bool has_frames = !it.done();
   debug_->thread_local_.break_frame_id_ =
-      has_frames ? it.frame()->id() : StackFrame::NO_ID;
+      has_frames ? it.frame()->id() : StackFrameId::NO_ID;
 
   debug_->UpdateState();
 }

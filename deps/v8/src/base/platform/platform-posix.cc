@@ -199,6 +199,12 @@ void* OS::GetRandomMmapAddr() {
     MutexGuard guard(rng_mutex.Pointer());
     GetPlatformRandomNumberGenerator()->NextBytes(&raw_addr, sizeof(raw_addr));
   }
+#if defined(__APPLE__)
+#if V8_TARGET_ARCH_ARM64
+  DCHECK_EQ(1 << 14, AllocatePageSize());
+  raw_addr = RoundDown(raw_addr, 1 << 14);
+#endif
+#endif
 #if defined(V8_USE_ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
     defined(THREAD_SANITIZER) || defined(LEAK_SANITIZER)
   // If random hint addresses interfere with address ranges hard coded in
@@ -755,13 +761,12 @@ void Thread::set_name(const char* name) {
   name_[sizeof(name_) - 1] = '\0';
 }
 
-
-void Thread::Start() {
+bool Thread::Start() {
   int result;
   pthread_attr_t attr;
   memset(&attr, 0, sizeof(attr));
   result = pthread_attr_init(&attr);
-  DCHECK_EQ(0, result);
+  if (result != 0) return false;
   size_t stack_size = stack_size_;
   if (stack_size == 0) {
 #if V8_OS_MACOSX
@@ -774,17 +779,17 @@ void Thread::Start() {
   }
   if (stack_size > 0) {
     result = pthread_attr_setstacksize(&attr, stack_size);
-    DCHECK_EQ(0, result);
+    if (result != 0) return pthread_attr_destroy(&attr), false;
   }
   {
     MutexGuard lock_guard(&data_->thread_creation_mutex_);
     result = pthread_create(&data_->thread_, &attr, ThreadEntry, this);
+    if (result != 0 || data_->thread_ == kNoThread) {
+      return pthread_attr_destroy(&attr), false;
+    }
   }
-  DCHECK_EQ(0, result);
   result = pthread_attr_destroy(&attr);
-  DCHECK_EQ(0, result);
-  DCHECK_NE(data_->thread_, kNoThread);
-  USE(result);
+  return result == 0;
 }
 
 void Thread::Join() { pthread_join(data_->thread_, nullptr); }

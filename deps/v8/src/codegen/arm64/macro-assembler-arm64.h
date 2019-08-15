@@ -83,6 +83,12 @@ inline MemOperand FieldMemOperand(Register object, int offset);
 // ----------------------------------------------------------------------------
 // MacroAssembler
 
+#if defined(V8_OS_WIN)
+// This offset is originated from PushCalleeSavedRegisters.
+static constexpr int kFramePointerOffsetInPushCalleeSavedRegisters =
+    10 * kSystemPointerSize;
+#endif  // V8_OS_WIN
+
 enum BranchType {
   // Copies of architectural conditions.
   // The associated conditions can be used in place of those, the code will
@@ -515,6 +521,46 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void Cbnz(const Register& rt, Label* label);
   void Cbz(const Register& rt, Label* label);
 
+  void Paciasp() {
+    DCHECK(allow_macro_instructions_);
+    paciasp();
+  }
+  void Autiasp() {
+    DCHECK(allow_macro_instructions_);
+    autiasp();
+  }
+
+  // The 1716 pac and aut instructions encourage people to use x16 and x17
+  // directly, perhaps without realising that this is forbidden. For example:
+  //
+  //     UseScratchRegisterScope temps(&masm);
+  //     Register temp = temps.AcquireX();  // temp will be x16
+  //     __ Mov(x17, ptr);
+  //     __ Mov(x16, modifier);  // Will override temp!
+  //     __ Pacia1716();
+  //
+  // To work around this issue, you must exclude x16 and x17 from the scratch
+  // register list. You may need to replace them with other registers:
+  //
+  //     UseScratchRegisterScope temps(&masm);
+  //     temps.Exclude(x16, x17);
+  //     temps.Include(x10, x11);
+  //     __ Mov(x17, ptr);
+  //     __ Mov(x16, modifier);
+  //     __ Pacia1716();
+  void Pacia1716() {
+    DCHECK(allow_macro_instructions_);
+    DCHECK(!TmpList()->IncludesAliasOf(x16));
+    DCHECK(!TmpList()->IncludesAliasOf(x17));
+    pacia1716();
+  }
+  void Autia1716() {
+    DCHECK(allow_macro_instructions_);
+    DCHECK(!TmpList()->IncludesAliasOf(x16));
+    DCHECK(!TmpList()->IncludesAliasOf(x17));
+    autia1716();
+  }
+
   inline void Dmb(BarrierDomain domain, BarrierType type);
   inline void Dsb(BarrierDomain domain, BarrierType type);
   inline void Isb();
@@ -852,7 +898,11 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   // Generate an indirect call (for when a direct call's range is not adequate).
   void IndirectCall(Address target, RelocInfo::Mode rmode);
 
-  void CallBuiltinPointer(Register builtin_pointer) override;
+  // Load the builtin given by the Smi in |builtin_index| into the same
+  // register.
+  void LoadEntryFromBuiltinIndex(Register builtin_index);
+  void CallBuiltinByIndex(Register builtin_index) override;
+  void CallBuiltin(int builtin_index);
 
   void LoadCodeObjectEntry(Register destination, Register code_object) override;
   void CallCodeObject(Register code_object) override;
@@ -1920,17 +1970,15 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
 class InstructionAccurateScope {
  public:
   explicit InstructionAccurateScope(TurboAssembler* tasm, size_t count = 0)
-      : tasm_(tasm)
+      : tasm_(tasm),
+        block_pool_(tasm, count * kInstrSize)
 #ifdef DEBUG
         ,
         size_(count * kInstrSize)
 #endif
   {
-    // Before blocking the const pool, see if it needs to be emitted.
-    tasm_->CheckConstPool(false, true);
-    tasm_->CheckVeneerPool(false, true);
-
-    tasm_->StartBlockPools();
+    tasm_->CheckVeneerPool(false, true, count * kInstrSize);
+    tasm_->StartBlockVeneerPool();
 #ifdef DEBUG
     if (count != 0) {
       tasm_->bind(&start_);
@@ -1941,7 +1989,7 @@ class InstructionAccurateScope {
   }
 
   ~InstructionAccurateScope() {
-    tasm_->EndBlockPools();
+    tasm_->EndBlockVeneerPool();
 #ifdef DEBUG
     if (start_.is_bound()) {
       DCHECK(tasm_->SizeOfCodeGeneratedSince(&start_) == size_);
@@ -1952,6 +2000,7 @@ class InstructionAccurateScope {
 
  private:
   TurboAssembler* tasm_;
+  TurboAssembler::BlockConstPoolScope block_pool_;
 #ifdef DEBUG
   size_t size_;
   Label start_;
@@ -1979,7 +2028,7 @@ class UseScratchRegisterScope {
     DCHECK_EQ(availablefp_->type(), CPURegister::kVRegister);
   }
 
-  ~UseScratchRegisterScope();
+  V8_EXPORT_PRIVATE ~UseScratchRegisterScope();
 
   // Take a register from the appropriate temps list. It will be returned
   // automatically when the scope ends.
@@ -1993,10 +2042,31 @@ class UseScratchRegisterScope {
   }
 
   Register AcquireSameSizeAs(const Register& reg);
-  VRegister AcquireSameSizeAs(const VRegister& reg);
+  V8_EXPORT_PRIVATE VRegister AcquireSameSizeAs(const VRegister& reg);
+
+  void Include(const CPURegList& list) { available_->Combine(list); }
+  void Exclude(const CPURegList& list) {
+#if DEBUG
+    CPURegList copy(list);
+    while (!copy.IsEmpty()) {
+      const CPURegister& reg = copy.PopHighestIndex();
+      DCHECK(available_->IncludesAliasOf(reg));
+    }
+#endif
+    available_->Remove(list);
+  }
+  void Include(const Register& reg1, const Register& reg2) {
+    CPURegList list(reg1, reg2);
+    Include(list);
+  }
+  void Exclude(const Register& reg1, const Register& reg2) {
+    CPURegList list(reg1, reg2);
+    Exclude(list);
+  }
 
  private:
-  static CPURegister AcquireNextAvailable(CPURegList* available);
+  V8_EXPORT_PRIVATE static CPURegister AcquireNextAvailable(
+      CPURegList* available);
 
   // Available scratch registers.
   CPURegList* available_;    // kRegister

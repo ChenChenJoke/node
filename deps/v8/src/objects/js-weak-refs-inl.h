@@ -9,7 +9,6 @@
 
 #include "src/api/api-inl.h"
 #include "src/heap/heap-write-barrier-inl.h"
-#include "src/objects/microtask-inl.h"
 #include "src/objects/smi-inl.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -22,7 +21,6 @@ OBJECT_CONSTRUCTORS_IMPL(WeakCell, HeapObject)
 OBJECT_CONSTRUCTORS_IMPL(JSWeakRef, JSObject)
 OBJECT_CONSTRUCTORS_IMPL(JSFinalizationGroup, JSObject)
 OBJECT_CONSTRUCTORS_IMPL(JSFinalizationGroupCleanupIterator, JSObject)
-OBJECT_CONSTRUCTORS_IMPL(FinalizationGroupCleanupJobTask, Microtask)
 
 ACCESSORS(JSFinalizationGroup, native_context, NativeContext,
           kNativeContextOffset)
@@ -50,10 +48,6 @@ ACCESSORS(JSWeakRef, target, HeapObject, kTargetOffset)
 ACCESSORS(JSFinalizationGroupCleanupIterator, finalization_group,
           JSFinalizationGroup, kFinalizationGroupOffset)
 CAST_ACCESSOR(JSFinalizationGroupCleanupIterator)
-
-ACCESSORS(FinalizationGroupCleanupJobTask, finalization_group,
-          JSFinalizationGroup, kFinalizationGroupOffset)
-CAST_ACCESSOR(FinalizationGroupCleanupJobTask)
 
 void JSFinalizationGroup::Register(
     Handle<JSFinalizationGroup> finalization_group, Handle<JSReceiver> target,
@@ -97,16 +91,16 @@ void JSFinalizationGroup::Register(
   }
 }
 
-void JSFinalizationGroup::Unregister(
-    Handle<JSFinalizationGroup> finalization_group, Handle<Object> key,
-    Isolate* isolate) {
+bool JSFinalizationGroup::Unregister(
+    Handle<JSFinalizationGroup> finalization_group,
+    Handle<JSReceiver> unregister_token, Isolate* isolate) {
   // Iterate through the doubly linked list of WeakCells associated with the
   // key. Each WeakCell will be in the "active_cells" or "cleared_cells" list of
   // its FinalizationGroup; remove it from there.
   if (!finalization_group->key_map().IsUndefined(isolate)) {
     Handle<ObjectHashTable> key_map =
         handle(ObjectHashTable::cast(finalization_group->key_map()), isolate);
-    Object value = key_map->Lookup(key);
+    Object value = key_map->Lookup(unregister_token);
     Object undefined = ReadOnlyRoots(isolate).undefined_value();
     while (value.IsWeakCell()) {
       WeakCell weak_cell = WeakCell::cast(value);
@@ -116,9 +110,13 @@ void JSFinalizationGroup::Unregister(
       weak_cell.set_key_list_next(undefined);
     }
     bool was_present;
-    key_map = ObjectHashTable::Remove(isolate, key_map, key, &was_present);
+    key_map = ObjectHashTable::Remove(isolate, key_map, unregister_token,
+                                      &was_present);
     finalization_group->set_key_map(*key_map);
+    return was_present;
   }
+
+  return false;
 }
 
 bool JSFinalizationGroup::NeedsCleanup() const {

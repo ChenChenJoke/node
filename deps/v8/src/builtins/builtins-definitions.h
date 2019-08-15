@@ -103,8 +103,8 @@ namespace internal {
                                                                                \
   /* String helpers */                                                         \
   TFC(StringCharAt, StringAt)                                                  \
-  TFC(StringCodePointAtUTF16, StringAt)                                        \
-  TFC(StringCodePointAtUTF32, StringAt)                                        \
+  TFC(StringCodePointAt, StringAt)                                             \
+  TFC(StringFromCodePointAt, StringAtAsString)                                 \
   TFC(StringEqual, Compare)                                                    \
   TFC(StringGreaterThan, Compare)                                              \
   TFC(StringGreaterThanOrEqual, Compare)                                       \
@@ -170,7 +170,9 @@ namespace internal {
                                                                                \
   /* Adapters for Turbofan into runtime */                                     \
   TFC(AllocateInYoungGeneration, Allocate)                                     \
+  TFC(AllocateRegularInYoungGeneration, Allocate)                              \
   TFC(AllocateInOldGeneration, Allocate)                                       \
+  TFC(AllocateRegularInOldGeneration, Allocate)                                \
                                                                                \
   /* TurboFan support builtins */                                              \
   TFS(CopyFastSmiOrObjectElements, kObject)                                    \
@@ -220,9 +222,9 @@ namespace internal {
   TFH(LoadIC_Slow, LoadWithVector)                                             \
   TFH(LoadIC_StringLength, LoadWithVector)                                     \
   TFH(LoadIC_StringWrapperLength, LoadWithVector)                              \
-  TFH(LoadIC_Uninitialized, LoadWithVector)                                    \
+  TFH(LoadIC_NoFeedback, Load)                                                 \
   TFH(StoreGlobalIC_Slow, StoreWithVector)                                     \
-  TFH(StoreIC_Uninitialized, StoreWithVector)                                  \
+  TFH(StoreIC_NoFeedback, Store)                                               \
   TFH(StoreInArrayLiteralIC_Slow, StoreWithVector)                             \
   TFH(KeyedLoadIC_SloppyArguments, LoadWithVector)                             \
   TFH(LoadIndexedInterceptorIC, LoadWithVector)                                \
@@ -266,7 +268,7 @@ namespace internal {
                                                                                \
   /* Abort */                                                                  \
   TFC(Abort, Abort)                                                            \
-  TFC(AbortJS, Abort)                                                          \
+  TFC(AbortCSAAssert, Abort)                                                   \
                                                                                \
   /* Built-in functions for Javascript */                                      \
   /* Special internal builtins */                                              \
@@ -642,8 +644,6 @@ namespace internal {
   TFJ(MathCeil, 1, kReceiver, kX)                                              \
   /* ES6 #sec-math.floor */                                                    \
   TFJ(MathFloor, 1, kReceiver, kX)                                             \
-  /* ES6 #sec-math.hypot */                                                    \
-  CPP(MathHypot)                                                               \
   /* ES6 #sec-math.imul */                                                     \
   TFJ(MathImul, 2, kReceiver, kX, kY)                                          \
   /* ES6 #sec-math.max */                                                      \
@@ -726,16 +726,12 @@ namespace internal {
   CPP(ObjectGetOwnPropertyDescriptors)                                         \
   TFJ(ObjectGetOwnPropertyNames, 1, kReceiver, kObject)                        \
   CPP(ObjectGetOwnPropertySymbols)                                             \
-  CPP(ObjectGetPrototypeOf)                                                    \
-  CPP(ObjectSetPrototypeOf)                                                    \
   TFJ(ObjectIs, 2, kReceiver, kLeft, kRight)                                   \
-  CPP(ObjectIsExtensible)                                                      \
   CPP(ObjectIsFrozen)                                                          \
   CPP(ObjectIsSealed)                                                          \
   TFJ(ObjectKeys, 1, kReceiver, kObject)                                       \
   CPP(ObjectLookupGetter)                                                      \
   CPP(ObjectLookupSetter)                                                      \
-  CPP(ObjectPreventExtensions)                                                 \
   /* ES6 #sec-object.prototype.tostring */                                     \
   TFJ(ObjectPrototypeToString, 0, kReceiver)                                   \
   /* ES6 #sec-object.prototype.valueof */                                      \
@@ -823,16 +819,10 @@ namespace internal {
   ASM(ReflectApply, Dummy)                                                     \
   ASM(ReflectConstruct, Dummy)                                                 \
   CPP(ReflectDefineProperty)                                                   \
-  CPP(ReflectDeleteProperty)                                                   \
-  CPP(ReflectGet)                                                              \
   CPP(ReflectGetOwnPropertyDescriptor)                                         \
-  CPP(ReflectGetPrototypeOf)                                                   \
   TFJ(ReflectHas, 2, kReceiver, kTarget, kKey)                                 \
-  CPP(ReflectIsExtensible)                                                     \
   CPP(ReflectOwnKeys)                                                          \
-  CPP(ReflectPreventExtensions)                                                \
   CPP(ReflectSet)                                                              \
-  CPP(ReflectSetPrototypeOf)                                                   \
                                                                                \
   /* RegExp */                                                                 \
   CPP(RegExpCapture1Getter)                                                    \
@@ -875,8 +865,6 @@ namespace internal {
   TFJ(RegExpPrototypeSourceGetter, 0, kReceiver)                               \
   /* ES #sec-get-regexp.prototype.sticky */                                    \
   TFJ(RegExpPrototypeStickyGetter, 0, kReceiver)                               \
-  /* ES #sec-regexp.prototype.test */                                          \
-  TFJ(RegExpPrototypeTest, 1, kReceiver, kString)                              \
   TFS(RegExpPrototypeTestFast, kReceiver, kString)                             \
   CPP(RegExpPrototypeToString)                                                 \
   /* ES #sec-get-regexp.prototype.unicode */                                   \
@@ -934,8 +922,6 @@ namespace internal {
   CPP(AtomicsWake)                                                             \
                                                                                \
   /* String */                                                                 \
-  /* ES #sec-string-constructor */                                             \
-  TFJ(StringConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
   /* ES #sec-string.fromcodepoint */                                           \
   CPP(StringFromCodePoint)                                                     \
   /* ES6 #sec-string.fromcharcode */                                           \
@@ -1036,7 +1022,6 @@ namespace internal {
   TFC(WasmAtomicNotify, WasmAtomicNotify)                                      \
   TFC(WasmI32AtomicWait, WasmI32AtomicWait)                                    \
   TFC(WasmI64AtomicWait, WasmI64AtomicWait)                                    \
-  TFC(WasmCallJavaScript, CallTrampoline)                                      \
   TFC(WasmMemoryGrow, WasmMemoryGrow)                                          \
   TFC(WasmTableGet, WasmTableGet)                                              \
   TFC(WasmTableSet, WasmTableSet)                                              \
@@ -1150,6 +1135,7 @@ namespace internal {
   ASM(StackCheck, Dummy)                                                       \
   ASM(DoubleToI, Dummy)                                                        \
   TFC(GetProperty, GetProperty)                                                \
+  TFS(GetPropertyWithReceiver, kObject, kKey, kReceiver, kOnNonExistent)       \
   TFS(SetProperty, kReceiver, kKey, kValue)                                    \
   TFS(SetPropertyInLiteral, kReceiver, kKey, kValue)                           \
   ASM(MemCopyUint8Uint8, CCall)                                                \
@@ -1351,7 +1337,6 @@ namespace internal {
   V(WasmAtomicNotify)                    \
   V(WasmI32AtomicWait)                   \
   V(WasmI64AtomicWait)                   \
-  V(WasmCallJavaScript)                  \
   V(WasmMemoryGrow)                      \
   V(WasmTableGet)                        \
   V(WasmTableSet)                        \

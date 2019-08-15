@@ -43,7 +43,8 @@ CallDescriptor* CreateCallDescriptor(Zone* zone, int return_count,
   return compiler::GetWasmCallDescriptor(zone, builder.Build());
 }
 
-Node* MakeConstant(RawMachineAssembler& m, MachineType type, int value) {
+Node* MakeConstant(RawMachineAssembler& m,  // NOLINT(runtime/references)
+                   MachineType type, int value) {
   switch (type.representation()) {
     case MachineRepresentation::kWord32:
       return m.Int32Constant(static_cast<int32_t>(value));
@@ -58,7 +59,8 @@ Node* MakeConstant(RawMachineAssembler& m, MachineType type, int value) {
   }
 }
 
-Node* Add(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
+Node* Add(RawMachineAssembler& m,  // NOLINT(runtime/references)
+          MachineType type, Node* a, Node* b) {
   switch (type.representation()) {
     case MachineRepresentation::kWord32:
       return m.Int32Add(a, b);
@@ -73,7 +75,8 @@ Node* Add(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
   }
 }
 
-Node* Sub(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
+Node* Sub(RawMachineAssembler& m,  // NOLINT(runtime/references)
+          MachineType type, Node* a, Node* b) {
   switch (type.representation()) {
     case MachineRepresentation::kWord32:
       return m.Int32Sub(a, b);
@@ -88,7 +91,8 @@ Node* Sub(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
   }
 }
 
-Node* Mul(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
+Node* Mul(RawMachineAssembler& m,  // NOLINT(runtime/references)
+          MachineType type, Node* a, Node* b) {
   switch (type.representation()) {
     case MachineRepresentation::kWord32:
       return m.Int32Mul(a, b);
@@ -103,7 +107,8 @@ Node* Mul(RawMachineAssembler& m, MachineType type, Node* a, Node* b) {
   }
 }
 
-Node* ToInt32(RawMachineAssembler& m, MachineType type, Node* a) {
+Node* ToInt32(RawMachineAssembler& m,  // NOLINT(runtime/references)
+              MachineType type, Node* a) {
   switch (type.representation()) {
     case MachineRepresentation::kWord32:
       return a;
@@ -162,11 +167,11 @@ void TestReturnMultipleValues(MachineType type) {
 
       OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
                                     Code::WASM_FUNCTION);
-      Handle<Code> code =
-          Pipeline::GenerateCodeForTesting(
-              &info, handles.main_isolate(), desc, m.graph(),
-              AssemblerOptions::Default(handles.main_isolate()), m.Export())
-              .ToHandleChecked();
+      Handle<Code> code = Pipeline::GenerateCodeForTesting(
+                              &info, handles.main_isolate(), desc, m.graph(),
+                              AssemblerOptions::Default(handles.main_isolate()),
+                              m.ExportForTest())
+                              .ToHandleChecked();
 #ifdef ENABLE_DISASSEMBLER
       if (FLAG_print_code) {
         StdoutStream os;
@@ -267,11 +272,11 @@ void ReturnLastValue(MachineType type) {
 
     OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
                                   Code::WASM_FUNCTION);
-    Handle<Code> code =
-        Pipeline::GenerateCodeForTesting(
-            &info, handles.main_isolate(), desc, m.graph(),
-            AssemblerOptions::Default(handles.main_isolate()), m.Export())
-            .ToHandleChecked();
+    Handle<Code> code = Pipeline::GenerateCodeForTesting(
+                            &info, handles.main_isolate(), desc, m.graph(),
+                            AssemblerOptions::Default(handles.main_isolate()),
+                            m.ExportForTest())
+                            .ToHandleChecked();
 
     std::shared_ptr<wasm::NativeModule> module = AllocateNativeModule(
         handles.main_isolate(), code->raw_instruction_size());
@@ -329,11 +334,11 @@ void ReturnSumOfReturns(MachineType type) {
 
     OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
                                   Code::WASM_FUNCTION);
-    Handle<Code> code =
-        Pipeline::GenerateCodeForTesting(
-            &info, handles.main_isolate(), desc, m.graph(),
-            AssemblerOptions::Default(handles.main_isolate()), m.Export())
-            .ToHandleChecked();
+    Handle<Code> code = Pipeline::GenerateCodeForTesting(
+                            &info, handles.main_isolate(), desc, m.graph(),
+                            AssemblerOptions::Default(handles.main_isolate()),
+                            m.ExportForTest())
+                            .ToHandleChecked();
 
     std::shared_ptr<wasm::NativeModule> module = AllocateNativeModule(
         handles.main_isolate(), code->raw_instruction_size());

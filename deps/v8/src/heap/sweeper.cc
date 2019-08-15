@@ -154,12 +154,21 @@ void Sweeper::StartSweeping() {
   MajorNonAtomicMarkingState* marking_state =
       heap_->mark_compact_collector()->non_atomic_marking_state();
   ForAllSweepingSpaces([this, marking_state](AllocationSpace space) {
-    int space_index = GetSweepSpaceIndex(space);
-    std::sort(
-        sweeping_list_[space_index].begin(), sweeping_list_[space_index].end(),
-        [marking_state](Page* a, Page* b) {
-          return marking_state->live_bytes(a) > marking_state->live_bytes(b);
-        });
+    // Sorting is done in order to make compaction more efficient: by sweeping
+    // pages with the most free bytes first, we make it more likely that when
+    // evacuating a page, already swept pages will have enough free bytes to
+    // hold the objects to move (and therefore, we won't need to wait for more
+    // pages to be swept in order to move those objects).
+    // Since maps don't move, there is no need to sort the pages from MAP_SPACE
+    // before sweeping them.
+    if (space != MAP_SPACE) {
+      int space_index = GetSweepSpaceIndex(space);
+      std::sort(
+          sweeping_list_[space_index].begin(),
+          sweeping_list_[space_index].end(), [marking_state](Page* a, Page* b) {
+            return marking_state->live_bytes(a) > marking_state->live_bytes(b);
+          });
+    }
   });
 }
 
@@ -184,7 +193,7 @@ void Sweeper::StartSweeperTasks() {
 
 void Sweeper::SweepOrWaitUntilSweepingCompleted(Page* page) {
   if (!page->SweepingDone()) {
-    ParallelSweepPage(page, page->owner()->identity());
+    ParallelSweepPage(page, page->owner_identity());
     if (!page->SweepingDone()) {
       // We were not able to sweep that page, i.e., a concurrent
       // sweeper thread currently owns this page. Wait for the sweeper
@@ -370,7 +379,9 @@ int Sweeper::RawSweep(Page* p, FreeListRebuildingMode free_list_mode,
   p->set_concurrent_sweeping_state(Page::kSweepingDone);
   if (code_object_registry) code_object_registry->Finalize();
   if (free_list_mode == IGNORE_FREE_LIST) return 0;
-  return static_cast<int>(FreeList::GuaranteedAllocatable(max_freed_bytes));
+
+  return static_cast<int>(
+      p->free_list()->GuaranteedAllocatable(max_freed_bytes));
 }
 
 void Sweeper::SweepSpaceFromTask(AllocationSpace identity) {
@@ -500,7 +511,7 @@ Page* Sweeper::GetSweepingPageSafe(AllocationSpace space) {
 }
 
 void Sweeper::EnsurePageIsIterable(Page* page) {
-  AllocationSpace space = page->owner()->identity();
+  AllocationSpace space = page->owner_identity();
   if (IsValidSweepingSpace(space)) {
     SweepOrWaitUntilSweepingCompleted(page);
   } else {
@@ -573,7 +584,7 @@ void Sweeper::AddPageForIterability(Page* page) {
   DCHECK(sweeping_in_progress_);
   DCHECK(iterability_in_progress_);
   DCHECK(!iterability_task_started_);
-  DCHECK(IsValidIterabilitySpace(page->owner()->identity()));
+  DCHECK(IsValidIterabilitySpace(page->owner_identity()));
   DCHECK_EQ(Page::kSweepingDone, page->concurrent_sweeping_state());
 
   iterability_list_.push_back(page);
@@ -581,7 +592,7 @@ void Sweeper::AddPageForIterability(Page* page) {
 }
 
 void Sweeper::MakeIterable(Page* page) {
-  DCHECK(IsValidIterabilitySpace(page->owner()->identity()));
+  DCHECK(IsValidIterabilitySpace(page->owner_identity()));
   const FreeSpaceTreatmentMode free_space_mode =
       Heap::ShouldZapGarbage() ? ZAP_FREE_SPACE : IGNORE_FREE_SPACE;
   RawSweep(page, IGNORE_FREE_LIST, free_space_mode);

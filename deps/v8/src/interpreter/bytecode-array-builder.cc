@@ -810,10 +810,9 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::LoadKeyedProperty(
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::LoadIteratorProperty(
-    Register object, int feedback_slot) {
-  size_t name_index = IteratorSymbolConstantPoolEntry();
-  OutputLdaNamedProperty(object, name_index, feedback_slot);
+BytecodeArrayBuilder& BytecodeArrayBuilder::GetIterator(Register object,
+                                                        int feedback_slot) {
+  OutputGetIterator(object, feedback_slot);
   return *this;
 }
 
@@ -1156,6 +1155,13 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfUndefined(
     BytecodeLabel* label) {
   DCHECK(!label->is_bound());
   OutputJumpIfUndefined(label, 0);
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfUndefinedOrNull(
+    BytecodeLabel* label) {
+  DCHECK(!label->is_bound());
+  OutputJumpIfUndefinedOrNull(label, 0);
   return *this;
 }
 

@@ -144,10 +144,10 @@ class PreParserExpression {
                                ExpressionTypeField::encode(kThisExpression));
   }
 
-  static PreParserExpression ThisPropertyWithPrivateFieldKey() {
-    return PreParserExpression(TypeField::encode(kExpression) |
-                               ExpressionTypeField::encode(
-                                   kThisPropertyExpressionWithPrivateFieldKey));
+  static PreParserExpression ThisPrivateReference() {
+    return PreParserExpression(
+        TypeField::encode(kExpression) |
+        ExpressionTypeField::encode(kThisPrivateReferenceExpression));
   }
 
   static PreParserExpression ThisProperty() {
@@ -162,10 +162,10 @@ class PreParserExpression {
         ExpressionTypeField::encode(kPropertyExpression));
   }
 
-  static PreParserExpression PropertyWithPrivateFieldKey() {
+  static PreParserExpression PrivateReference() {
     return PreParserExpression(
         TypeField::encode(kExpression) |
-        ExpressionTypeField::encode(kPropertyExpressionWithPrivateFieldKey));
+        ExpressionTypeField::encode(kPrivateReferenceExpression));
   }
 
   static PreParserExpression Call() {
@@ -242,25 +242,23 @@ class PreParserExpression {
     return TypeField::decode(code_) == kExpression &&
            (ExpressionTypeField::decode(code_) == kThisPropertyExpression ||
             ExpressionTypeField::decode(code_) ==
-                kThisPropertyExpressionWithPrivateFieldKey);
+                kThisPrivateReferenceExpression);
   }
 
   bool IsProperty() const {
     return TypeField::decode(code_) == kExpression &&
            (ExpressionTypeField::decode(code_) == kPropertyExpression ||
             ExpressionTypeField::decode(code_) == kThisPropertyExpression ||
+            ExpressionTypeField::decode(code_) == kPrivateReferenceExpression ||
             ExpressionTypeField::decode(code_) ==
-                kPropertyExpressionWithPrivateFieldKey ||
-            ExpressionTypeField::decode(code_) ==
-                kThisPropertyExpressionWithPrivateFieldKey);
+                kThisPrivateReferenceExpression);
   }
 
-  bool IsPropertyWithPrivateFieldKey() const {
+  bool IsPrivateReference() const {
     return TypeField::decode(code_) == kExpression &&
-           (ExpressionTypeField::decode(code_) ==
-                kPropertyExpressionWithPrivateFieldKey ||
+           (ExpressionTypeField::decode(code_) == kPrivateReferenceExpression ||
             ExpressionTypeField::decode(code_) ==
-                kThisPropertyExpressionWithPrivateFieldKey);
+                kThisPrivateReferenceExpression);
   }
 
   bool IsCall() const {
@@ -332,9 +330,9 @@ class PreParserExpression {
   enum ExpressionType {
     kThisExpression,
     kThisPropertyExpression,
-    kThisPropertyExpressionWithPrivateFieldKey,
+    kThisPrivateReferenceExpression,
     kPropertyExpression,
-    kPropertyExpressionWithPrivateFieldKey,
+    kPrivateReferenceExpression,
     kCallExpression,
     kCallEvalExpression,
     kCallTaggedTemplateExpression,
@@ -353,16 +351,14 @@ class PreParserExpression {
   // Expression nodes may be represented as multiple Types, not exclusively
   // through kExpression.
   // TODO(caitp, adamk): clean up PreParserExpression bitfields.
-  using IsParenthesizedField = BitField<bool, TypeField::kNext, 1>;
+  using IsParenthesizedField = TypeField::Next<bool, 1>;
 
   // The rest of the bits are interpreted depending on the value
   // of the Type field, so they can share the storage.
-  using ExpressionTypeField =
-      BitField<ExpressionType, IsParenthesizedField::kNext, 4>;
+  using ExpressionTypeField = IsParenthesizedField::Next<ExpressionType, 4>;
   using IdentifierTypeField =
-      BitField<PreParserIdentifier::Type, IsParenthesizedField::kNext, 8>;
-  using HasCoverInitializedNameField =
-      BitField<bool, IsParenthesizedField::kNext, 1>;
+      IsParenthesizedField::Next<PreParserIdentifier::Type, 8>;
+  using HasCoverInitializedNameField = IsParenthesizedField::Next<bool, 1>;
 
   uint32_t code_;
   friend class PreParser;
@@ -569,13 +565,18 @@ class PreParserFactory {
     return PreParserExpression::Default();
   }
 
+  PreParserExpression NewOptionalChain(const PreParserExpression& expr) {
+    return PreParserExpression::Default();
+  }
+
   PreParserExpression NewProperty(const PreParserExpression& obj,
-                                  const PreParserExpression& key, int pos) {
+                                  const PreParserExpression& key, int pos,
+                                  bool optional_chain = false) {
     if (key.IsIdentifier() && key.AsIdentifier().IsPrivateName()) {
       if (obj.IsThis()) {
-        return PreParserExpression::ThisPropertyWithPrivateFieldKey();
+        return PreParserExpression::ThisPrivateReference();
       }
-      return PreParserExpression::PropertyWithPrivateFieldKey();
+      return PreParserExpression::PrivateReference();
     }
 
     if (obj.IsThis()) {
@@ -629,9 +630,10 @@ class PreParserFactory {
                                         int pos) {
     return PreParserExpression::Default();
   }
-  PreParserExpression NewCall(
-      PreParserExpression expression, const PreParserExpressionList& arguments,
-      int pos, Call::PossiblyEval possibly_eval = Call::NOT_EVAL) {
+  PreParserExpression NewCall(PreParserExpression expression,
+                              const PreParserExpressionList& arguments, int pos,
+                              Call::PossiblyEval possibly_eval = Call::NOT_EVAL,
+                              bool optional_chain = false) {
     if (possibly_eval == Call::IS_POSSIBLY_EVAL) {
       DCHECK(expression.IsIdentifier() && expression.AsIdentifier().IsEval());
       return PreParserExpression::CallEval();
@@ -848,7 +850,7 @@ class PreParserFuncNameInferrer {
 
 class PreParserSourceRange {
  public:
-  PreParserSourceRange() {}
+  PreParserSourceRange() = default;
   PreParserSourceRange(int start, int end) {}
   static PreParserSourceRange Empty() { return PreParserSourceRange(); }
   static PreParserSourceRange OpenEnded(int32_t start) { return Empty(); }
@@ -1045,9 +1047,8 @@ class PreParser : public ParserBase<PreParser> {
       TemplateLiteralState* state, int start, const PreParserExpression& tag) {
     return PreParserExpression::Default();
   }
-  V8_INLINE bool IsPropertyWithPrivateFieldKey(
-      const PreParserExpression& expression) {
-    return expression.IsPropertyWithPrivateFieldKey();
+  V8_INLINE bool IsPrivateReference(const PreParserExpression& expression) {
+    return expression.IsPrivateReference();
   }
   V8_INLINE void SetLanguageMode(Scope* scope, LanguageMode mode) {
     scope->SetLanguageMode(mode);
@@ -1057,7 +1058,8 @@ class PreParser : public ParserBase<PreParser> {
   V8_INLINE PreParserExpression SpreadCall(const PreParserExpression& function,
                                            const PreParserExpressionList& args,
                                            int pos,
-                                           Call::PossiblyEval possibly_eval);
+                                           Call::PossiblyEval possibly_eval,
+                                           bool optional_chain);
   V8_INLINE PreParserExpression
   SpreadCallNew(const PreParserExpression& function,
                 const PreParserExpressionList& args, int pos);
@@ -1096,22 +1098,26 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   void DeclareAndBindVariable(const VariableProxy* proxy, VariableKind kind,
-                              VariableMode mode, InitializationFlag init,
-                              Scope* scope, bool* was_added, int position) {
-    DeclareVariableName(proxy->raw_name(), mode, scope, was_added, position,
-                        kind);
+                              VariableMode mode, Scope* scope, bool* was_added,
+                              int initializer_position) {
+    Variable* var = DeclareVariableName(proxy->raw_name(), mode, scope,
+                                        was_added, proxy->position(), kind);
+    var->set_initializer_position(initializer_position);
     // Don't bother actually binding the proxy.
   }
 
   Variable* DeclarePrivateVariableName(const AstRawString* name,
-                                       ClassScope* scope, bool* was_added) {
-    return scope->DeclarePrivateName(name, was_added);
+                                       ClassScope* scope, VariableMode mode,
+                                       bool* was_added) {
+    DCHECK(IsConstVariableMode(mode));
+    return scope->DeclarePrivateName(name, mode, was_added);
   }
 
   Variable* DeclareVariableName(const AstRawString* name, VariableMode mode,
                                 Scope* scope, bool* was_added,
                                 int position = kNoSourcePosition,
                                 VariableKind kind = NORMAL_VARIABLE) {
+    DCHECK(!IsPrivateMethodOrAccessorVariableMode(mode));
     Variable* var = scope->DeclareVariableName(name, mode, was_added, kind);
     if (var == nullptr) {
       ReportUnidentifiableError();
@@ -1251,14 +1257,10 @@ class PreParser : public ParserBase<PreParser> {
       ClassScope* scope, const PreParserIdentifier& property_name,
       const PreParserExpression& property, ClassLiteralProperty::Kind kind,
       bool is_static, ClassInfo* class_info) {
-    // TODO(joyee): We do not support private accessors yet (which allow
-    // declaring the same private name twice). Make them noops.
-    if (kind != ClassLiteralProperty::Kind::FIELD &&
-        kind != ClassLiteralProperty::Kind::METHOD) {
-      return;
-    }
     bool was_added;
-    DeclarePrivateVariableName(property_name.string_, scope, &was_added);
+
+    DeclarePrivateVariableName(property_name.string_, scope,
+                               GetVariableMode(kind), &was_added);
     if (!was_added) {
       Scanner::Location loc(property.position(), property.position() + 1);
       ReportMessageAt(loc, MessageTemplate::kVarRedeclaration,
@@ -1483,11 +1485,9 @@ class PreParser : public ParserBase<PreParser> {
 
   // Reporting errors.
   void ReportMessageAt(Scanner::Location source_location,
-                       MessageTemplate message, const char* arg = nullptr,
-                       ParseErrorType error_type = kSyntaxError) {
-    pending_error_handler()->ReportMessageAt(source_location.beg_pos,
-                                             source_location.end_pos, message,
-                                             arg, error_type);
+                       MessageTemplate message, const char* arg = nullptr) {
+    pending_error_handler()->ReportMessageAt(
+        source_location.beg_pos, source_location.end_pos, message, arg);
     scanner()->set_parser_error();
   }
 
@@ -1498,17 +1498,14 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE void ReportMessageAt(Scanner::Location source_location,
                                  MessageTemplate message,
-                                 const PreParserIdentifier& arg,
-                                 ParseErrorType error_type = kSyntaxError) {
+                                 const PreParserIdentifier& arg) {
     UNREACHABLE();
   }
 
   void ReportMessageAt(Scanner::Location source_location,
-                       MessageTemplate message, const AstRawString* arg,
-                       ParseErrorType error_type = kSyntaxError) {
-    pending_error_handler()->ReportMessageAt(source_location.beg_pos,
-                                             source_location.end_pos, message,
-                                             arg, error_type);
+                       MessageTemplate message, const AstRawString* arg) {
+    pending_error_handler()->ReportMessageAt(
+        source_location.beg_pos, source_location.end_pos, message, arg);
     scanner()->set_parser_error();
   }
 
@@ -1644,11 +1641,11 @@ class PreParser : public ParserBase<PreParser> {
     return PreParserStatement::Jump();
   }
 
-  V8_INLINE void AddFormalParameter(PreParserFormalParameters* parameters,
-                                    PreParserExpression& pattern,
-                                    const PreParserExpression& initializer,
-                                    int initializer_end_position,
-                                    bool is_rest) {
+  V8_INLINE void AddFormalParameter(
+      PreParserFormalParameters* parameters,
+      PreParserExpression& pattern,  // NOLINT(runtime/references)
+      const PreParserExpression& initializer, int initializer_end_position,
+      bool is_rest) {
     DeclarationScope* scope = parameters->scope;
     scope->RecordParameter(is_rest);
     parameters->UpdateArityAndFunctionLength(!initializer.IsNull(), is_rest);
@@ -1702,8 +1699,9 @@ class PreParser : public ParserBase<PreParser> {
 PreParserExpression PreParser::SpreadCall(const PreParserExpression& function,
                                           const PreParserExpressionList& args,
                                           int pos,
-                                          Call::PossiblyEval possibly_eval) {
-  return factory()->NewCall(function, args, pos, possibly_eval);
+                                          Call::PossiblyEval possibly_eval,
+                                          bool optional_chain) {
+  return factory()->NewCall(function, args, pos, possibly_eval, optional_chain);
 }
 
 PreParserExpression PreParser::SpreadCallNew(

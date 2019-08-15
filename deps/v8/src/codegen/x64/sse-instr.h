@@ -6,7 +6,14 @@
 #define V8_CODEGEN_X64_SSE_INSTR_H_
 
 #define SSE2_INSTRUCTION_LIST(V) \
+  V(andnpd, 66, 0F, 55)          \
+  V(addpd, 66, 0F, 58)           \
+  V(mulpd, 66, 0F, 59)           \
   V(cvtps2dq, 66, 0F, 5B)        \
+  V(subpd, 66, 0F, 5C)           \
+  V(minpd, 66, 0F, 5D)           \
+  V(maxpd, 66, 0F, 5F)           \
+  V(divpd, 66, 0F, 5E)           \
   V(punpcklbw, 66, 0F, 60)       \
   V(punpcklwd, 66, 0F, 61)       \
   V(punpckldq, 66, 0F, 62)       \
@@ -21,6 +28,7 @@
   V(paddb, 66, 0F, FC)           \
   V(paddw, 66, 0F, FD)           \
   V(paddd, 66, 0F, FE)           \
+  V(paddq, 66, 0F, D4)           \
   V(paddsb, 66, 0F, EC)          \
   V(paddsw, 66, 0F, ED)          \
   V(paddusb, 66, 0F, DC)         \
@@ -39,13 +47,16 @@
   V(pmuludq, 66, 0F, F4)         \
   V(psllw, 66, 0F, F1)           \
   V(pslld, 66, 0F, F2)           \
+  V(psllq, 66, 0F, F3)           \
   V(psraw, 66, 0F, E1)           \
   V(psrad, 66, 0F, E2)           \
   V(psrlw, 66, 0F, D1)           \
   V(psrld, 66, 0F, D2)           \
+  V(psrlq, 66, 0F, D3)           \
   V(psubb, 66, 0F, F8)           \
   V(psubw, 66, 0F, F9)           \
   V(psubd, 66, 0F, FA)           \
+  V(psubq, 66, 0F, FB)           \
   V(psubsb, 66, 0F, E8)          \
   V(psubsw, 66, 0F, E9)          \
   V(psubusb, 66, 0F, D8)         \
@@ -66,6 +77,8 @@
   V(psignd, 66, 0F, 38, 0A)
 
 #define SSE4_INSTRUCTION_LIST(V) \
+  V(blendvpd, 66, 0F, 38, 15)    \
+  V(pcmpeqq, 66, 0F, 38, 29)     \
   V(ptest, 66, 0F, 38, 17)       \
   V(pmovsxbw, 66, 0F, 38, 20)    \
   V(pmovsxwd, 66, 0F, 38, 23)    \
@@ -81,5 +94,7 @@
   V(pmaxuw, 66, 0F, 38, 3E)      \
   V(pmaxud, 66, 0F, 38, 3F)      \
   V(pmulld, 66, 0F, 38, 40)
+
+#define SSE4_2_INSTRUCTION_LIST(V) V(pcmpgtq, 66, 0F, 38, 37)
 
 #endif  // V8_CODEGEN_X64_SSE_INSTR_H_

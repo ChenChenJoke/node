@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --experimental-wasm-type-reflection
+// Flags: --experimental-wasm-type-reflection --expose-gc
 
 load('test/mjsunit/wasm/wasm-module-builder.js');
 
@@ -209,6 +209,42 @@ load('test/mjsunit/wasm/wasm-module-builder.js');
     () => new WebAssembly.Function({parameters:[], results:[]}, _ => 0));
 })();
 
+(function TestFunctionConstructorNonArray1() {
+  let log = [];  // Populated with a log of accesses.
+  let two = { toString: () => "2" };  // Just a fancy "2".
+  let logger = new Proxy({ length: two, "0": "i32", "1": "f32"}, {
+    get: function(obj, prop) { log.push(prop); return Reflect.get(obj, prop); },
+    set: function(obj, prop, val) { assertUnreachable(); }
+  });
+  let fun = new WebAssembly.Function({parameters:logger, results:[]}, _ => 0);
+  assertArrayEquals(["i32", "f32"], WebAssembly.Function.type(fun).parameters);
+  assertArrayEquals(["length", "0", "1"], log);
+})();
+
+(function TestFunctionConstructorNonArray2() {
+  let throw1 = { get length() { throw new Error("cannot see length"); }};
+  let throw2 = { length: { toString: _ => { throw new Error("no length") } } };
+  let throw3 = { length: "not a length value, this also throws" };
+  assertThrows(
+    () => new WebAssembly.Function({parameters:throw1, results:[]}), Error,
+    /cannot see length/);
+  assertThrows(
+    () => new WebAssembly.Function({parameters:throw2, results:[]}), Error,
+    /no length/);
+  assertThrows(
+    () => new WebAssembly.Function({parameters:throw3, results:[]}), TypeError,
+    /Argument 0 contains parameters without 'length'/);
+  assertThrows(
+    () => new WebAssembly.Function({parameters:[], results:throw1}), Error,
+    /cannot see length/);
+  assertThrows(
+    () => new WebAssembly.Function({parameters:[], results:throw2}), Error,
+    /no length/);
+  assertThrows(
+    () => new WebAssembly.Function({parameters:[], results:throw3}), TypeError,
+    /Argument 0 contains results without 'length'/);
+})();
+
 (function TestFunctionConstructedFunction() {
   let fun = new WebAssembly.Function({parameters:[], results:[]}, _ => 0);
   assertTrue(fun instanceof WebAssembly.Function);
@@ -219,8 +255,7 @@ load('test/mjsunit/wasm/wasm-module-builder.js');
   assertSame(fun.__proto__.__proto__.__proto__, Object.prototype);
   assertSame(fun.constructor, WebAssembly.Function);
   assertEquals(typeof fun, 'function');
-  // TODO(7742): Enable once it is callable.
-  // assertDoesNotThrow(() => fun());
+  assertDoesNotThrow(() => fun());
 })();
 
 (function TestFunctionExportedFunction() {
@@ -239,6 +274,21 @@ load('test/mjsunit/wasm/wasm-module-builder.js');
   assertDoesNotThrow(() => fun());
 })();
 
+(function TestFunctionTypeOfConstructedFunction() {
+  let testcases = [
+    {parameters:[], results:[]},
+    {parameters:["i32"], results:[]},
+    {parameters:["i64"], results:["i32"]},
+    {parameters:["f64", "f64", "i32"], results:[]},
+    {parameters:["f32"], results:["f32"]},
+  ];
+  testcases.forEach(function(expected) {
+    let fun = new WebAssembly.Function(expected, _ => 0);
+    let type = WebAssembly.Function.type(fun);
+    assertEquals(expected, type)
+  });
+})();
+
 (function TestFunctionTypeOfExportedFunction() {
   let testcases = [
     [kSig_v_v, {parameters:[], results:[]}],
@@ -254,4 +304,130 @@ load('test/mjsunit/wasm/wasm-module-builder.js');
     let type = WebAssembly.Function.type(instance.exports.fun);
     assertEquals(expected, type)
   });
+})();
+
+(function TestFunctionConstructedCoercions() {
+  let obj1 = { valueOf: _ => 123.45 };
+  let obj2 = { toString: _ => "456" };
+  let gcer = { valueOf: _ => gc() };
+  let testcases = [
+    { params: { sig: ["i32"],
+                val: [23.5],
+                exp: [23], },
+      result: { sig: ["i32"],
+                val: 42.7,
+                exp: 42, },
+    },
+    { params: { sig: ["i32", "f32", "f64"],
+                val: [obj1,  obj2,  "789"],
+                exp: [123,   456,   789], },
+      result: { sig: [],
+                val: undefined,
+                exp: undefined, },
+    },
+    { params: { sig: ["i32", "f32", "f64"],
+                val: [gcer,  {},    "xyz"],
+                exp: [0,     NaN,   NaN], },
+      result: { sig: ["f64"],
+                val: gcer,
+                exp: NaN, },
+    },
+  ];
+  testcases.forEach(function({params, result}) {
+    let p = params.sig; let r = result.sig; var params_after;
+    function testFun() { params_after = arguments; return result.val; }
+    let fun = new WebAssembly.Function({parameters:p, results:r}, testFun);
+    let result_after = fun.apply(undefined, params.val);
+    assertArrayEquals(params.exp, params_after);
+    assertEquals(result.exp, result_after);
+  });
+})();
+
+(function TestFunctionConstructedIncompatibleSig() {
+  let fun = new WebAssembly.Function({parameters:["i64"], results:[]}, _ => 0);
+  assertThrows(() => fun(), TypeError,
+    /wasm function signature contains illegal type/);
+})();
+
+(function TestFunctionTableSetAndCall() {
+  let builder = new WasmModuleBuilder();
+  let fun1 = new WebAssembly.Function({parameters:[], results:["i32"]}, _ => 7);
+  let fun2 = new WebAssembly.Function({parameters:[], results:["i32"]}, _ => 9);
+  let fun3 = new WebAssembly.Function({parameters:[], results:["f64"]}, _ => 0);
+  let table = new WebAssembly.Table({element: "anyfunc", initial: 2});
+  let table_index = builder.addImportedTable("m", "table", 2);
+  let sig_index = builder.addType(kSig_i_v);
+  table.set(0, fun1);
+  builder.addFunction('main', kSig_i_i)
+      .addBody([
+        kExprGetLocal, 0,
+        kExprCallIndirect, sig_index, table_index
+      ])
+      .exportFunc();
+  let instance = builder.instantiate({ m: { table: table }});
+  assertEquals(7, instance.exports.main(0));
+  table.set(1, fun2);
+  assertEquals(9, instance.exports.main(1));
+  table.set(1, fun3);
+  assertTraps(kTrapFuncSigMismatch, () => instance.exports.main(1));
+})();
+
+(function TestFunctionTableSetIncompatibleSig() {
+  let builder = new WasmModuleBuilder();
+  let fun = new WebAssembly.Function({parameters:[], results:["i64"]}, _ => 0);
+  let table = new WebAssembly.Table({element: "anyfunc", initial: 2});
+  let table_index = builder.addImportedTable("m", "table", 2);
+  let sig_index = builder.addType(kSig_l_v);
+  table.set(0, fun);
+  builder.addFunction('main', kSig_v_i)
+      .addBody([
+        kExprGetLocal, 0,
+        kExprCallIndirect, sig_index, table_index,
+        kExprDrop
+      ])
+      .exportFunc();
+  let instance = builder.instantiate({ m: { table: table }});
+  assertThrows(
+    () => instance.exports.main(0), TypeError,
+    /wasm function signature contains illegal type/);
+  assertTraps(kTrapFuncSigMismatch, () => instance.exports.main(1));
+  table.set(1, fun);
+  assertThrows(
+    () => instance.exports.main(1), TypeError,
+    /wasm function signature contains illegal type/);
+})();
+
+(function TestFunctionModuleImportMatchingSig() {
+  let builder = new WasmModuleBuilder();
+  let fun = new WebAssembly.Function({parameters:[], results:["i32"]}, _ => 7);
+  let fun_index = builder.addImport("m", "fun", kSig_i_v)
+  builder.addFunction('main', kSig_i_v)
+      .addBody([
+        kExprCallFunction, fun_index
+      ])
+      .exportFunc();
+  let instance = builder.instantiate({ m: { fun: fun }});
+  assertEquals(7, instance.exports.main());
+})();
+
+(function TestFunctionModuleImportMismatchingSig() {
+  let builder = new WasmModuleBuilder();
+  let fun1 = new WebAssembly.Function({parameters:[], results:[]}, _ => 7);
+  let fun2 = new WebAssembly.Function({parameters:["i32"], results:[]}, _ => 8);
+  let fun3 = new WebAssembly.Function({parameters:[], results:["f32"]}, _ => 9);
+  let fun_index = builder.addImport("m", "fun", kSig_i_v)
+  builder.addFunction('main', kSig_i_v)
+      .addBody([
+        kExprCallFunction, fun_index
+      ])
+      .exportFunc();
+  assertThrows(
+    () => builder.instantiate({ m: { fun: fun1 }}), WebAssembly.LinkError,
+    /imported function does not match the expected type/);
+  assertThrows(
+    () => builder.instantiate({ m: { fun: fun2 }}), WebAssembly.LinkError,
+    /imported function does not match the expected type/);
+  assertThrows(
+    () => builder.instantiate({ m: { fun: fun3 }}), WebAssembly.LinkError,
+    /imported function does not match the expected type/);
 })();

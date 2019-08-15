@@ -144,8 +144,8 @@ class LinkageLocation {
  private:
   enum LocationType { REGISTER, STACK_SLOT };
 
-  class TypeField : public BitField<LocationType, 0, 1> {};
-  class LocationField : public BitField<int32_t, TypeField::kNext, 31> {};
+  using TypeField = BitField<LocationType, 0, 1>;
+  using LocationField = TypeField::Next<int32_t, 31>;
 
   static constexpr int32_t ANY_REGISTER = -1;
   static constexpr int32_t MAX_STACK_SLOT = 32767;
@@ -197,7 +197,8 @@ class V8_EXPORT_PRIVATE CallDescriptor final
     // Use the kJavaScriptCallCodeStartRegister (fixed) register for the
     // indirect target address when calling.
     kFixedTargetRegister = 1u << 7,
-    kAllowCallThroughSlot = 1u << 8
+    kAllowCallThroughSlot = 1u << 8,
+    kCallerSavedRegisters = 1u << 9
   };
   using Flags = base::Flags<Flag>;
 
@@ -276,6 +277,9 @@ class V8_EXPORT_PRIVATE CallDescriptor final
   bool InitializeRootRegister() const {
     return flags() & kInitializeRootRegister;
   }
+  bool NeedsCallerSavedRegisters() const {
+    return flags() & kCallerSavedRegisters;
+  }
 
   LinkageLocation GetReturnLocation(size_t index) const {
     return location_sig_->GetReturn(index);
@@ -325,7 +329,7 @@ class V8_EXPORT_PRIVATE CallDescriptor final
 
   bool CanTailCall(const Node* call) const;
 
-  int CalculateFixedFrameSize() const;
+  int CalculateFixedFrameSize(Code::Kind code_kind) const;
 
   RegList AllocatableRegisters() const { return allocatable_registers_; }
 
@@ -418,7 +422,7 @@ class V8_EXPORT_PRIVATE Linkage : public NON_EXPORTED_BASE(ZoneObject) {
   // structs, pointers to members, etc.
   static CallDescriptor* GetSimplifiedCDescriptor(
       Zone* zone, const MachineSignature* sig,
-      bool set_initialize_root_flag = false);
+      CallDescriptor::Flags flags = CallDescriptor::kNoFlags);
 
   // Get the location of an (incoming) parameter to this function.
   LinkageLocation GetParameterLocation(int index) const {

@@ -105,12 +105,12 @@ ScopeInfo Context::scope_info() {
   return ScopeInfo::cast(get(SCOPE_INFO_INDEX));
 }
 
-Module Context::module() {
+SourceTextModule Context::module() {
   Context current = *this;
   while (!current.IsModuleContext()) {
     current = current.previous();
   }
-  return Module::cast(current.extension());
+  return SourceTextModule::cast(current.extension());
 }
 
 JSGlobalObject Context::global_object() {
@@ -161,8 +161,8 @@ static Maybe<bool> UnscopableLookup(LookupIterator* it) {
 }
 
 static PropertyAttributes GetAttributesForMode(VariableMode mode) {
-  DCHECK(IsDeclaredVariableMode(mode));
-  return mode == VariableMode::kConst ? READ_ONLY : NONE;
+  DCHECK(IsSerializableVariableMode(mode));
+  return IsConstVariableMode(mode) ? READ_ONLY : NONE;
 }
 
 // static
@@ -338,8 +338,8 @@ Handle<Object> Context::Lookup(Handle<Context> context, Handle<String> name,
           *index = cell_index;
           *variable_mode = mode;
           *init_flag = flag;
-          *attributes = ModuleDescriptor::GetCellIndexKind(cell_index) ==
-                                ModuleDescriptor::kExport
+          *attributes = SourceTextModuleDescriptor::GetCellIndexKind(
+                            cell_index) == SourceTextModuleDescriptor::kExport
                             ? GetAttributesForMode(mode)
                             : READ_ONLY;
           return handle(context->module(), isolate);
@@ -394,31 +394,26 @@ Handle<Object> Context::Lookup(Handle<Context> context, Handle<String> name,
   return Handle<Object>::null();
 }
 
-void Context::AddOptimizedCode(Code code) {
-  DCHECK(IsNativeContext());
+void NativeContext::AddOptimizedCode(Code code) {
   DCHECK(code.kind() == Code::OPTIMIZED_FUNCTION);
   DCHECK(code.next_code_link().IsUndefined());
   code.set_next_code_link(get(OPTIMIZED_CODE_LIST));
   set(OPTIMIZED_CODE_LIST, code, UPDATE_WEAK_WRITE_BARRIER);
 }
 
-void Context::SetOptimizedCodeListHead(Object head) {
-  DCHECK(IsNativeContext());
+void NativeContext::SetOptimizedCodeListHead(Object head) {
   set(OPTIMIZED_CODE_LIST, head, UPDATE_WEAK_WRITE_BARRIER);
 }
 
-Object Context::OptimizedCodeListHead() {
-  DCHECK(IsNativeContext());
+Object NativeContext::OptimizedCodeListHead() {
   return get(OPTIMIZED_CODE_LIST);
 }
 
-void Context::SetDeoptimizedCodeListHead(Object head) {
-  DCHECK(IsNativeContext());
+void NativeContext::SetDeoptimizedCodeListHead(Object head) {
   set(DEOPTIMIZED_CODE_LIST, head, UPDATE_WEAK_WRITE_BARRIER);
 }
 
-Object Context::DeoptimizedCodeListHead() {
-  DCHECK(IsNativeContext());
+Object NativeContext::DeoptimizedCodeListHead() {
   return get(DEOPTIMIZED_CODE_LIST);
 }
 
@@ -474,19 +469,14 @@ bool Context::IsBootstrappingOrValidParentContext(Object object,
 
 #endif
 
-void Context::ResetErrorsThrown() {
-  DCHECK(IsNativeContext());
-  set_errors_thrown(Smi::FromInt(0));
-}
+void NativeContext::ResetErrorsThrown() { set_errors_thrown(Smi::FromInt(0)); }
 
-void Context::IncrementErrorsThrown() {
-  DCHECK(IsNativeContext());
-
+void NativeContext::IncrementErrorsThrown() {
   int previous_value = errors_thrown().value();
   set_errors_thrown(Smi::FromInt(previous_value + 1));
 }
 
-int Context::GetErrorsThrown() { return errors_thrown().value(); }
+int NativeContext::GetErrorsThrown() { return errors_thrown().value(); }
 
 STATIC_ASSERT(Context::MIN_CONTEXT_SLOTS == 4);
 STATIC_ASSERT(NativeContext::kScopeInfoOffset ==

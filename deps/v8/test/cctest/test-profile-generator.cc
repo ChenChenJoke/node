@@ -381,7 +381,8 @@ TEST(RecordTickSample) {
   CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("");
-  ProfileGenerator generator(&profiles);
+  CodeMap code_map;
+  ProfileGenerator generator(&profiles, &code_map);
   CodeEntry* entry1 = new CodeEntry(i::Logger::FUNCTION_TAG, "aaa");
   CodeEntry* entry2 = new CodeEntry(i::Logger::FUNCTION_TAG, "bbb");
   CodeEntry* entry3 = new CodeEntry(i::Logger::FUNCTION_TAG, "ccc");
@@ -449,7 +450,8 @@ TEST(SampleIds) {
   CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("", {CpuProfilingMode::kLeafNodeLineNumbers});
-  ProfileGenerator generator(&profiles);
+  CodeMap code_map;
+  ProfileGenerator generator(&profiles, &code_map);
   CodeEntry* entry1 = new CodeEntry(i::Logger::FUNCTION_TAG, "aaa");
   CodeEntry* entry2 = new CodeEntry(i::Logger::FUNCTION_TAG, "bbb");
   CodeEntry* entry3 = new CodeEntry(i::Logger::FUNCTION_TAG, "ccc");
@@ -503,7 +505,8 @@ TEST(NoSamples) {
   CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("");
-  ProfileGenerator generator(&profiles);
+  CodeMap code_map;
+  ProfileGenerator generator(&profiles, &code_map);
   CodeEntry* entry1 = new CodeEntry(i::Logger::FUNCTION_TAG, "aaa");
   generator.code_map()->AddCode(ToAddress(0x1500), entry1, 0x200);
 
@@ -624,14 +627,12 @@ TEST(ProfileNodeScriptId) {
 
   v8::Local<v8::Script> script_a =
       v8_compile(v8_str("function a() { startProfiling(); }\n"));
-  script_a->Run(v8::Isolate::GetCurrent()->GetCurrentContext())
-      .ToLocalChecked();
+  script_a->Run(env).ToLocalChecked();
   v8::Local<v8::Script> script_b =
       v8_compile(v8_str("function b() { a(); }\n"
                         "b();\n"
                         "stopProfiling();\n"));
-  script_b->Run(v8::Isolate::GetCurrent()->GetCurrentContext())
-      .ToLocalChecked();
+  script_b->Run(env).ToLocalChecked();
   CHECK_EQ(1, iprofiler->GetProfilesCount());
   const v8::CpuProfile* profile = i::ProfilerExtension::last_profile;
   const v8::CpuProfileNode* current = profile->GetTopDownRoot();
@@ -671,7 +672,8 @@ static const char* line_number_test_source_profile_time_functions =
 "bar_at_the_second_line();\n"
 "function lazy_func_at_6th_line() {}";
 
-int GetFunctionLineNumber(CpuProfiler& profiler, LocalContext& env,
+int GetFunctionLineNumber(CpuProfiler& profiler,  // NOLINT(runtime/references)
+                          LocalContext& env,      // NOLINT(runtime/references)
                           const char* name) {
   CodeMap* code_map = profiler.generator()->code_map();
   i::Handle<i::JSFunction> func = i::Handle<i::JSFunction>::cast(

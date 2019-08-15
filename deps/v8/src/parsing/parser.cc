@@ -15,8 +15,8 @@
 #include "src/base/overflowing-math.h"
 #include "src/base/platform/platform.h"
 #include "src/codegen/bailout-reason.h"
+#include "src/common/message-template.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
-#include "src/execution/message-template.h"
 #include "src/logging/log.h"
 #include "src/numbers/conversions-inl.h"
 #include "src/objects/scope-info.h"
@@ -424,7 +424,7 @@ Parser::Parser(ParseInfo* info)
   set_allow_natives(info->allow_natives_syntax());
   set_allow_harmony_dynamic_import(info->allow_harmony_dynamic_import());
   set_allow_harmony_import_meta(info->allow_harmony_import_meta());
-  set_allow_harmony_numeric_separator(info->allow_harmony_numeric_separator());
+  set_allow_harmony_optional_chaining(info->allow_harmony_optional_chaining());
   set_allow_harmony_private_methods(info->allow_harmony_private_methods());
   for (int feature = 0; feature < v8::Isolate::kUseCounterFeatureCount;
        ++feature) {
@@ -501,9 +501,7 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
                         Scope::DeserializationMode::kIncludingVariables);
 
   scanner_.Initialize();
-  if (FLAG_harmony_hashbang) {
-    scanner_.SkipHashBang();
-  }
+  scanner_.SkipHashBang();
   FunctionLiteral* result = DoParseProgram(isolate, info);
   MaybeResetCharacterStream(info, result);
   MaybeProcessSourceRanges(info, result, stack_limit_);
@@ -1347,7 +1345,7 @@ Statement* Parser::ParseExportDeclaration() {
   }
   loc.end_pos = scanner()->location().end_pos;
 
-  ModuleDescriptor* descriptor = module();
+  SourceTextModuleDescriptor* descriptor = module();
   for (const AstRawString* name : names) {
     descriptor->AddExport(name, name, loc, zone());
   }
@@ -1379,11 +1377,12 @@ VariableProxy* Parser::DeclareBoundVariable(const AstRawString* name,
 }
 
 void Parser::DeclareAndBindVariable(VariableProxy* proxy, VariableKind kind,
-                                    VariableMode mode, InitializationFlag init,
-                                    Scope* scope, bool* was_added, int begin,
-                                    int end) {
-  Variable* var = DeclareVariable(proxy->raw_name(), kind, mode, init, scope,
-                                  was_added, begin, end);
+                                    VariableMode mode, Scope* scope,
+                                    bool* was_added, int initializer_position) {
+  Variable* var = DeclareVariable(
+      proxy->raw_name(), kind, mode, Variable::DefaultInitializationFlag(mode),
+      scope, was_added, proxy->position(), kNoSourcePosition);
+  var->set_initializer_position(initializer_position);
   proxy->BindTo(var);
 }
 
@@ -2784,12 +2783,14 @@ Variable* Parser::CreateSyntheticContextVariable(const AstRawString* name) {
 }
 
 Variable* Parser::CreatePrivateNameVariable(ClassScope* scope,
+                                            VariableMode mode,
                                             const AstRawString* name) {
   DCHECK_NOT_NULL(name);
   int begin = position();
   int end = end_position();
   bool was_added = false;
-  Variable* var = scope->DeclarePrivateName(name, &was_added);
+  DCHECK(IsConstVariableMode(mode));
+  Variable* var = scope->DeclarePrivateName(name, mode, &was_added);
   if (!was_added) {
     Scanner::Location loc(begin, end);
     ReportMessageAt(loc, MessageTemplate::kVarRedeclaration, var->raw_name());
@@ -2824,14 +2825,8 @@ void Parser::DeclarePrivateClassMember(ClassScope* scope,
                                        ClassLiteralProperty* property,
                                        ClassLiteralProperty::Kind kind,
                                        bool is_static, ClassInfo* class_info) {
-  DCHECK_IMPLIES(kind == ClassLiteralProperty::Kind::METHOD,
+  DCHECK_IMPLIES(kind != ClassLiteralProperty::Kind::FIELD,
                  allow_harmony_private_methods());
-  // TODO(joyee): We do not support private accessors yet (which allow
-  // declaring the same private name twice). Make them noops.
-  if (kind != ClassLiteralProperty::Kind::FIELD &&
-      kind != ClassLiteralProperty::Kind::METHOD) {
-    return;
-  }
 
   if (kind == ClassLiteralProperty::Kind::FIELD) {
     if (is_static) {
@@ -2841,7 +2836,8 @@ void Parser::DeclarePrivateClassMember(ClassScope* scope,
     }
   }
 
-  Variable* private_name_var = CreatePrivateNameVariable(scope, property_name);
+  Variable* private_name_var =
+      CreatePrivateNameVariable(scope, GetVariableMode(kind), property_name);
   int pos = property->value()->position();
   if (pos == kNoSourcePosition) {
     pos = property->key()->position();
@@ -2948,16 +2944,6 @@ Expression* Parser::RewriteClassLiteral(ClassScope* block_scope,
 
   AddFunctionForNameInference(class_info->constructor);
   return class_literal;
-}
-
-bool Parser::IsPropertyWithPrivateFieldKey(Expression* expression) {
-  if (!expression->IsProperty()) return false;
-  Property* property = expression->AsProperty();
-
-  if (!property->key()->IsVariableProxy()) return false;
-  VariableProxy* key = property->key()->AsVariableProxy();
-
-  return key->IsPrivateName();
 }
 
 void Parser::InsertShadowingVarBindingInitializers(Block* inner_block) {
@@ -3177,10 +3163,12 @@ ArrayLiteral* Parser::ArrayLiteralFromListWithSpread(
 
 Expression* Parser::SpreadCall(Expression* function,
                                const ScopedPtrList<Expression>& args_list,
-                               int pos, Call::PossiblyEval is_possibly_eval) {
+                               int pos, Call::PossiblyEval is_possibly_eval,
+                               bool optional_chain) {
   // Handle this case in BytecodeGenerator.
   if (OnlyLastArgIsSpread(args_list) || function->IsSuperCallReference()) {
-    return factory()->NewCall(function, args_list, pos);
+    return factory()->NewCall(function, args_list, pos, Call::NOT_EVAL,
+                              optional_chain);
   }
 
   ScopedPtrList<Expression> args(pointer_buffer());
@@ -3195,8 +3183,9 @@ Expression* Parser::SpreadCall(Expression* function,
       VariableProxy* obj = factory()->NewVariableProxy(temp);
       Assignment* assign_obj = factory()->NewAssignment(
           Token::ASSIGN, obj, function->AsProperty()->obj(), kNoSourcePosition);
-      function = factory()->NewProperty(
-          assign_obj, function->AsProperty()->key(), kNoSourcePosition);
+      function =
+          factory()->NewProperty(assign_obj, function->AsProperty()->key(),
+                                 kNoSourcePosition, optional_chain);
       args.Add(function);
       obj = factory()->NewVariableProxy(temp);
       args.Add(obj);

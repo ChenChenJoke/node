@@ -8,6 +8,7 @@
 #include "src/torque/declarable.h"
 #include "src/torque/global-context.h"
 #include "src/torque/server-data.h"
+#include "src/torque/type-inference.h"
 #include "src/torque/type-oracle.h"
 
 namespace v8 {
@@ -57,6 +58,12 @@ const AbstractType* TypeVisitor::ComputeType(AbstractTypeDeclaration* decl) {
   const Type* parent_type = nullptr;
   if (decl->extends) {
     parent_type = Declarations::LookupType(*decl->extends);
+    if (parent_type->IsUnionType()) {
+      // UnionType::IsSupertypeOf requires that types can only extend from non-
+      // union types in order to work correctly.
+      ReportError("type \"", decl->name->value,
+                  "\" cannot extend a type union");
+    }
   }
 
   if (generates == "" && parent_type) {
@@ -85,33 +92,36 @@ void DeclareMethods(AggregateType* container_type,
                     const std::vector<Declaration*>& methods) {
   for (auto declaration : methods) {
     CurrentSourcePosition::Scope pos_scope(declaration->pos);
-    StandardDeclaration* standard_declaration =
-        StandardDeclaration::DynamicCast(declaration);
-    DCHECK(standard_declaration);
     TorqueMacroDeclaration* method =
-        TorqueMacroDeclaration::DynamicCast(standard_declaration->callable);
-    Signature signature = TypeVisitor::MakeSignature(method->signature.get());
+        TorqueMacroDeclaration::DynamicCast(declaration);
+    Signature signature = TypeVisitor::MakeSignature(method);
     signature.parameter_names.insert(
         signature.parameter_names.begin() + signature.implicit_count,
         MakeNode<Identifier>(kThisParameterName));
-    Statement* body = *(standard_declaration->body);
-    std::string method_name(method->name);
+    Statement* body = *(method->body);
+    const std::string& method_name(method->name->value);
     signature.parameter_types.types.insert(
         signature.parameter_types.types.begin() + signature.implicit_count,
         container_type);
-    Declarations::CreateMethod(container_type, method_name, signature, false,
-                               body);
+    Declarations::CreateMethod(container_type, method_name, signature, body);
   }
 }
 
-const StructType* TypeVisitor::ComputeType(StructDeclaration* decl) {
+const StructType* TypeVisitor::ComputeType(
+    StructDeclaration* decl,
+    StructType::MaybeSpecializationKey specialized_from) {
   CurrentSourcePosition::Scope position_activator(decl->pos);
-  StructType* struct_type = TypeOracle::GetStructType(decl->name->value);
+  StructType* struct_type =
+      TypeOracle::GetStructType(decl->name->value, specialized_from);
   size_t offset = 0;
   for (auto& field : decl->fields) {
     CurrentSourcePosition::Scope position_activator(
         field.name_and_type.type->pos);
     const Type* field_type = TypeVisitor::ComputeType(field.name_and_type.type);
+    if (field_type->IsConstexpr()) {
+      ReportError("struct field \"", field.name_and_type.name->value,
+                  "\" carries constexpr type \"", *field_type, "\"");
+    }
     struct_type->RegisterField({field.name_and_type.name->pos,
                                 struct_type,
                                 base::nullopt,
@@ -156,36 +166,56 @@ const ClassType* TypeVisitor::ComputeType(ClassDeclaration* decl) {
     new_class = TypeOracle::GetClassType(super_type, decl->name->value,
                                          decl->flags, generates, decl, alias);
   } else {
-    if (decl->super) {
-      ReportError("Only extern classes can inherit.");
+    if (!decl->super) {
+      ReportError("Intern class ", decl->name->value,
+                  " must extend class Struct.");
+    }
+    const Type* super_type = TypeVisitor::ComputeType(*decl->super);
+    const ClassType* super_class = ClassType::DynamicCast(super_type);
+    const Type* struct_type = Declarations::LookupGlobalType("Struct");
+    if (!super_class || super_class != struct_type) {
+      ReportError("Intern class ", decl->name->value,
+                  " must extend class Struct.");
     }
     if (decl->generates) {
       ReportError("Only extern classes can specify a generated type.");
     }
-    new_class =
-        TypeOracle::GetClassType(TypeOracle::GetTaggedType(), decl->name->value,
-                                 decl->flags, "FixedArray", decl, alias);
+    new_class = TypeOracle::GetClassType(
+        super_type, decl->name->value,
+        decl->flags | ClassFlag::kGeneratePrint | ClassFlag::kGenerateVerify,
+        decl->name->value, decl, alias);
   }
   return new_class;
 }
 
 const Type* TypeVisitor::ComputeType(TypeExpression* type_expression) {
   if (auto* basic = BasicTypeExpression::DynamicCast(type_expression)) {
-    const TypeAlias* alias = Declarations::LookupTypeAlias(
-        QualifiedName{basic->namespace_qualification, basic->name});
-    if (GlobalContext::collect_language_server_data()) {
-      LanguageServerData::AddDefinition(type_expression->pos,
-                                        alias->GetDeclarationPosition());
+    QualifiedName qualified_name{basic->namespace_qualification, basic->name};
+    auto& args = basic->generic_arguments;
+    const Type* type;
+    SourcePosition pos = SourcePosition::Invalid();
+
+    if (args.empty()) {
+      auto* alias = Declarations::LookupTypeAlias(qualified_name);
+      type = alias->type();
+      pos = alias->GetDeclarationPosition();
+    } else {
+      auto* generic_struct =
+          Declarations::LookupUniqueGenericStructType(qualified_name);
+      type = TypeOracle::GetGenericStructTypeInstance(generic_struct,
+                                                      ComputeTypeVector(args));
+      pos = generic_struct->declaration()->name->pos;
     }
-    return alias->type();
+
+    if (GlobalContext::collect_language_server_data()) {
+      LanguageServerData::AddDefinition(type_expression->pos, pos);
+    }
+    return type;
+
   } else if (auto* union_type =
                  UnionTypeExpression::DynamicCast(type_expression)) {
     return TypeOracle::GetUnionType(ComputeType(union_type->a),
                                     ComputeType(union_type->b));
-  } else if (auto* reference_type =
-                 ReferenceTypeExpression::DynamicCast(type_expression)) {
-    return TypeOracle::GetReferenceType(
-        ComputeType(reference_type->referenced_type));
   } else {
     auto* function_type_exp = FunctionTypeExpression::cast(type_expression);
     TypeVector argument_types;
@@ -197,22 +227,23 @@ const Type* TypeVisitor::ComputeType(TypeExpression* type_expression) {
   }
 }
 
-Signature TypeVisitor::MakeSignature(const CallableNodeSignature* signature) {
+Signature TypeVisitor::MakeSignature(const CallableDeclaration* declaration) {
   LabelDeclarationVector definition_vector;
-  for (const auto& label : signature->labels) {
+  for (const auto& label : declaration->labels) {
     LabelDeclaration def = {label.name, ComputeTypeVector(label.types)};
     definition_vector.push_back(def);
   }
   base::Optional<std::string> arguments_variable;
-  if (signature->parameters.has_varargs)
-    arguments_variable = signature->parameters.arguments_variable;
-  Signature result{signature->parameters.names,
+  if (declaration->parameters.has_varargs)
+    arguments_variable = declaration->parameters.arguments_variable;
+  Signature result{declaration->parameters.names,
                    arguments_variable,
-                   {ComputeTypeVector(signature->parameters.types),
-                    signature->parameters.has_varargs},
-                   signature->parameters.implicit_count,
-                   ComputeType(signature->return_type),
-                   definition_vector};
+                   {ComputeTypeVector(declaration->parameters.types),
+                    declaration->parameters.has_varargs},
+                   declaration->parameters.implicit_count,
+                   ComputeType(declaration->return_type),
+                   definition_vector,
+                   declaration->transitioning};
   return result;
 }
 
@@ -285,6 +316,53 @@ void TypeVisitor::VisitClassFieldsAndMethods(
   class_type->SetSize(class_offset);
   class_type->GenerateAccessors();
   DeclareMethods(class_type, class_declaration->methods);
+}
+
+const StructType* TypeVisitor::ComputeTypeForStructExpression(
+    TypeExpression* type_expression,
+    const std::vector<const Type*>& term_argument_types) {
+  auto* basic = BasicTypeExpression::DynamicCast(type_expression);
+  if (!basic) {
+    ReportError("expected basic type expression referring to struct");
+  }
+
+  QualifiedName qualified_name{basic->namespace_qualification, basic->name};
+  base::Optional<GenericStructType*> maybe_generic_struct =
+      Declarations::TryLookupGenericStructType(qualified_name);
+
+  // Compute types of non-generic structs as usual
+  if (!maybe_generic_struct) {
+    const Type* type = ComputeType(type_expression);
+    const StructType* struct_type = StructType::DynamicCast(type);
+    if (!struct_type) {
+      ReportError(*type, " is not a struct, but used like one");
+    }
+    return struct_type;
+  }
+
+  auto generic_struct = *maybe_generic_struct;
+  auto explicit_type_arguments = ComputeTypeVector(basic->generic_arguments);
+
+  std::vector<TypeExpression*> term_parameters;
+  auto& fields = generic_struct->declaration()->fields;
+  term_parameters.reserve(fields.size());
+  for (auto& field : fields) {
+    term_parameters.push_back(field.name_and_type.type);
+  }
+
+  TypeArgumentInference inference(
+      generic_struct->declaration()->generic_parameters,
+      explicit_type_arguments, term_parameters, term_argument_types);
+  if (inference.HasFailed()) {
+    ReportError("failed to infer type arguments for struct ", basic->name,
+                " initialization: ", inference.GetFailureReason());
+  }
+  if (GlobalContext::collect_language_server_data()) {
+    LanguageServerData::AddDefinition(type_expression->pos,
+                                      generic_struct->declaration()->name->pos);
+  }
+  return TypeOracle::GetGenericStructTypeInstance(generic_struct,
+                                                  inference.GetResult());
 }
 
 }  // namespace torque

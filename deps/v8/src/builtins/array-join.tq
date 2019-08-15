@@ -16,7 +16,7 @@ namespace array_join {
     return GetProperty(receiver, k);
   }
 
-  LoadJoinElement<array::DictionaryElements>(
+  transitioning LoadJoinElement<array::DictionaryElements>(
       context: Context, receiver: JSReceiver, k: Number): Object {
     const array: JSArray = UnsafeCast<JSArray>(receiver);
     const dict: NumberDictionary = UnsafeCast<NumberDictionary>(array.elements);
@@ -37,7 +37,7 @@ namespace array_join {
     const array: JSArray = UnsafeCast<JSArray>(receiver);
     const fixedArray: FixedArray = UnsafeCast<FixedArray>(array.elements);
     const element: Object = fixedArray.objects[UnsafeCast<Smi>(k)];
-    return element == Hole ? kEmptyString : element;
+    return element == TheHole ? kEmptyString : element;
   }
 
   LoadJoinElement<array::FastDoubleElements>(
@@ -56,7 +56,7 @@ namespace array_join {
     assert(!IsDetachedBuffer(typedArray.buffer));
     return typed_array::LoadFixedTypedArrayElementAsTagged(
         typedArray.data_ptr, UnsafeCast<Smi>(k),
-        typed_array::KindForArrayType<T>(), SMI_PARAMETERS);
+        typed_array::KindForArrayType<T>());
   }
 
   transitioning builtin ConvertToLocaleString(
@@ -86,29 +86,25 @@ namespace array_join {
   // (see LoadJoinElement<ElementsAccessor>).
   macro CannotUseSameArrayAccessor<T: type>(implicit context: Context)(
       loadFn: LoadJoinElementFn, receiver: JSReceiver, originalMap: Map,
-      originalLen: Number): never
-      labels Cannot, Can;
+      originalLen: Number): bool;
 
   CannotUseSameArrayAccessor<JSArray>(implicit context: Context)(
       loadFn: LoadJoinElementFn, receiver: JSReceiver, originalMap: Map,
-      originalLen: Number): never
-      labels Cannot, Can {
-    if (loadFn == LoadJoinElement<array::GenericElementsAccessor>) goto Can;
+      originalLen: Number): bool {
+    if (loadFn == LoadJoinElement<array::GenericElementsAccessor>) return false;
 
     const array: JSArray = UnsafeCast<JSArray>(receiver);
-    if (originalMap != array.map) goto Cannot;
-    if (originalLen != array.length) goto Cannot;
-    if (IsNoElementsProtectorCellInvalid()) goto Cannot;
-    goto Can;
+    if (originalMap != array.map) return true;
+    if (originalLen != array.length) return true;
+    if (IsNoElementsProtectorCellInvalid()) return true;
+    return false;
   }
 
   CannotUseSameArrayAccessor<JSTypedArray>(implicit context: Context)(
-      loadFn: LoadJoinElementFn, receiver: JSReceiver, initialMap: Map,
-      initialLen: Number): never
-      labels Cannot, Can {
+      _loadFn: LoadJoinElementFn, receiver: JSReceiver, _initialMap: Map,
+      _initialLen: Number): bool {
     const typedArray: JSTypedArray = UnsafeCast<JSTypedArray>(receiver);
-    if (IsDetachedBuffer(typedArray.buffer)) goto Cannot;
-    goto Can;
+    return IsDetachedBuffer(typedArray.buffer);
   }
 
   // Calculates the running total length of the resulting string.  If the
@@ -246,7 +242,7 @@ namespace array_join {
         case (nofSeparators: Number): {
           return StringRepeat(context, sep, nofSeparators);
         }
-        case (obj: Object): {
+        case (Object): {
           unreachable;
         }
       }
@@ -327,7 +323,7 @@ namespace array_join {
       useToLocaleString: constexpr bool, receiver: JSReceiver, sep: String,
       lenNumber: Number, locales: Object, options: Object): Object;
 
-  ArrayJoin<JSArray>(implicit context: Context)(
+  transitioning ArrayJoin<JSArray>(implicit context: Context)(
       useToLocaleString: constexpr bool, receiver: JSReceiver, sep: String,
       lenNumber: Number, locales: Object, options: Object): Object {
     const map: Map = receiver.map;
@@ -374,7 +370,7 @@ namespace array_join {
         receiver, sep, lenNumber, useToLocaleString, locales, options, loadFn);
   }
 
-  ArrayJoin<JSTypedArray>(implicit context: Context)(
+  transitioning ArrayJoin<JSTypedArray>(implicit context: Context)(
       useToLocaleString: constexpr bool, receiver: JSReceiver, sep: String,
       lenNumber: Number, locales: Object, options: Object): Object {
     const map: Map = receiver.map;
@@ -448,7 +444,7 @@ namespace array_join {
       const previouslyVisited: Object = stack.objects[i];
 
       // Add `receiver` to the first open slot
-      if (previouslyVisited == Hole) {
+      if (previouslyVisited == TheHole) {
         stack.objects[i] = receiver;
         return True;
       }
@@ -465,19 +461,17 @@ namespace array_join {
   }
 
   // Fast path the common non-nested calls. If the receiver is not already on
-  // the stack, add it to the stack and go to ReceiverAdded. Otherwise go to
-  // ReceiverNotAdded.
+  // the stack, add it to the stack and return true. Otherwise return false.
   macro JoinStackPushInline(implicit context: Context)(receiver: JSReceiver):
-      never
-      labels ReceiverAdded, ReceiverNotAdded {
+      bool {
     try {
       const stack: FixedArray = LoadJoinStack()
           otherwise IfUninitialized;
-      if (stack.objects[0] == Hole) {
+      if (stack.objects[0] == TheHole) {
         stack.objects[0] = receiver;
       } else if (JoinStackPush(stack, receiver) == False)
         deferred {
-          goto ReceiverNotAdded;
+          return false;
         }
     }
     label IfUninitialized {
@@ -486,7 +480,7 @@ namespace array_join {
       stack.objects[0] = receiver;
       SetJoinStack(stack);
     }
-    goto ReceiverAdded;
+    return true;
   }
 
   // Removes a receiver from the stack. The FixedArray will automatically shrink
@@ -504,7 +498,7 @@ namespace array_join {
             SetJoinStack(newStack);
           }
         else {
-          stack.objects[i] = Hole;
+          stack.objects[i] = TheHole;
         }
         return Undefined;
       }
@@ -521,7 +515,7 @@ namespace array_join {
     // Builtin call was not nested (receiver is the first entry) and
     // did not contain other nested arrays that expanded the stack.
     if (stack.objects[0] == receiver && len == kMinJoinStackSize) {
-      StoreFixedArrayElement(stack, 0, Hole, SKIP_WRITE_BARRIER);
+      StoreFixedArrayElement(stack, 0, TheHole, SKIP_WRITE_BARRIER);
     } else
       deferred {
         JoinStackPop(stack, receiver);
@@ -535,7 +529,7 @@ namespace array_join {
       sepObj: Object, locales: Object, options: Object): Object {
     // 3. If separator is undefined, let sep be the single-element String ",".
     // 4. Else, let sep be ? ToString(separator).
-    let sep: String =
+    const sep: String =
         sepObj == Undefined ? ',' : ToString_Inline(context, sepObj);
 
     // If the receiver is not empty and not already being joined, continue with
@@ -557,7 +551,8 @@ namespace array_join {
 
   // https://tc39.github.io/ecma262/#sec-array.prototype.join
   transitioning javascript builtin
-  ArrayPrototypeJoin(context: Context, receiver: Object, ...arguments): Object {
+  ArrayPrototypeJoin(js-implicit context: Context, receiver: Object)(
+      ...arguments): Object {
     const separator: Object = arguments[0];
 
     // 1. Let O be ? ToObject(this value).
@@ -566,8 +561,8 @@ namespace array_join {
     // 2. Let len be ? ToLength(? Get(O, "length")).
     const len: Number = GetLengthProperty(o);
 
-    // Only handle valid array lengths. Although the spec allows larger values,
-    // this matches historical V8 behavior.
+    // Only handle valid array lengths. Although the spec allows larger
+    // values, this matches historical V8 behavior.
     if (len > kMaxArrayIndex + 1) ThrowTypeError(kInvalidArrayLength);
 
     return CycleProtectedArrayJoin<JSArray>(
@@ -576,7 +571,7 @@ namespace array_join {
 
   // https://tc39.github.io/ecma262/#sec-array.prototype.tolocalestring
   transitioning javascript builtin ArrayPrototypeToLocaleString(
-      context: Context, receiver: Object, ...arguments): Object {
+      js-implicit context: Context, receiver: Object)(...arguments): Object {
     const locales: Object = arguments[0];
     const options: Object = arguments[1];
 
@@ -586,8 +581,8 @@ namespace array_join {
     // 2. Let len be ? ToLength(? Get(O, "length")).
     const len: Number = GetLengthProperty(o);
 
-    // Only handle valid array lengths. Although the spec allows larger values,
-    // this matches historical V8 behavior.
+    // Only handle valid array lengths. Although the spec allows larger
+    // values, this matches historical V8 behavior.
     if (len > kMaxArrayIndex + 1) ThrowTypeError(kInvalidArrayLength);
 
     return CycleProtectedArrayJoin<JSArray>(
@@ -596,7 +591,7 @@ namespace array_join {
 
   // https://tc39.github.io/ecma262/#sec-array.prototype.tostring
   transitioning javascript builtin ArrayPrototypeToString(
-      context: Context, receiver: Object, ...arguments): Object {
+      js-implicit context: Context, receiver: Object)(...arguments): Object {
     // 1. Let array be ? ToObject(this value).
     const array: JSReceiver = ToObject_Inline(context, receiver);
 
@@ -617,7 +612,7 @@ namespace array_join {
 
   // https://tc39.github.io/ecma262/#sec-%typedarray%.prototype.join
   transitioning javascript builtin TypedArrayPrototypeJoin(
-      context: Context, receiver: Object, ...arguments): Object {
+      js-implicit context: Context, receiver: Object)(...arguments): Object {
     const separator: Object = arguments[0];
 
     // Spec: ValidateTypedArray is applied to the this value prior to evaluating
@@ -632,7 +627,7 @@ namespace array_join {
 
   // https://tc39.github.io/ecma262/#sec-%typedarray%.prototype.tolocalestring
   transitioning javascript builtin TypedArrayPrototypeToLocaleString(
-      context: Context, receiver: Object, ...arguments): Object {
+      js-implicit context: Context, receiver: Object)(...arguments): Object {
     const locales: Object = arguments[0];
     const options: Object = arguments[1];
 

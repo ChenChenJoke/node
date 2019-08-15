@@ -216,6 +216,17 @@ void JSGenericLowering::LowerJSLoadGlobal(Node* node) {
   }
 }
 
+void JSGenericLowering::LowerJSGetIterator(Node* node) {
+  CallDescriptor::Flags flags = FrameStateFlagForCall(node);
+  const PropertyAccess& p = PropertyAccessOf(node->op());
+  node->InsertInput(zone(), 1, jsgraph()->SmiConstant(p.feedback().index()));
+  Node* vector = jsgraph()->HeapConstant(p.feedback().vector());
+  node->InsertInput(zone(), 2, vector);
+  Callable callable =
+      Builtins::CallableFor(isolate(), Builtins::kGetIteratorWithFeedback);
+  ReplaceWithStubCall(node, callable, flags);
+}
+
 void JSGenericLowering::LowerJSStoreProperty(Node* node) {
   CallDescriptor::Flags flags = FrameStateFlagForCall(node);
   PropertyAccess const& p = PropertyAccessOf(node->op());
@@ -812,14 +823,13 @@ void JSGenericLowering::LowerJSStackCheck(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
-  Node* limit = effect = graph()->NewNode(
-      machine()->Load(MachineType::Pointer()),
-      jsgraph()->ExternalConstant(
-          ExternalReference::address_of_stack_limit(isolate())),
-      jsgraph()->IntPtrConstant(0), effect, control);
-  Node* pointer = graph()->NewNode(machine()->LoadStackPointer());
+  Node* limit = effect =
+      graph()->NewNode(machine()->Load(MachineType::Pointer()),
+                       jsgraph()->ExternalConstant(
+                           ExternalReference::address_of_jslimit(isolate())),
+                       jsgraph()->IntPtrConstant(0), effect, control);
 
-  Node* check = graph()->NewNode(machine()->UintLessThan(), limit, pointer);
+  Node* check = graph()->NewNode(machine()->StackPointerGreaterThan(), limit);
   Node* branch =
       graph()->NewNode(common()->Branch(BranchHint::kTrue), check, control);
 

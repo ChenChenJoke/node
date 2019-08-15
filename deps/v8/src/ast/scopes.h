@@ -41,7 +41,8 @@ class VariableMap : public ZoneHashMap {
   Variable* Declare(Zone* zone, Scope* scope, const AstRawString* name,
                     VariableMode mode, VariableKind kind,
                     InitializationFlag initialization_flag,
-                    MaybeAssignedFlag maybe_assigned_flag, bool* was_added);
+                    MaybeAssignedFlag maybe_assigned_flag,
+                    bool* was_added);
 
   V8_EXPORT_PRIVATE Variable* Lookup(const AstRawString* name);
   void Remove(Variable* var);
@@ -712,7 +713,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
 
   // True if one of the inner scopes or the scope itself calls eval.
   bool inner_scope_calls_eval_ : 1;
-  bool force_context_allocation_ : 1;
   bool force_context_allocation_for_parameters_ : 1;
 
   // True if it holds 'var' declarations.
@@ -1155,14 +1155,14 @@ class ModuleScope final : public DeclarationScope {
               AstValueFactory* avfactory);
 
   // Returns nullptr in a deserialized scope.
-  ModuleDescriptor* module() const { return module_descriptor_; }
+  SourceTextModuleDescriptor* module() const { return module_descriptor_; }
 
   // Set MODULE as VariableLocation for all variables that will live in a
   // module's export table.
   void AllocateModuleVariables();
 
  private:
-  ModuleDescriptor* const module_descriptor_;
+  SourceTextModuleDescriptor* const module_descriptor_;
 };
 
 class V8_EXPORT_PRIVATE ClassScope : public Scope {
@@ -1174,7 +1174,8 @@ class V8_EXPORT_PRIVATE ClassScope : public Scope {
 
   // Declare a private name in the private name map and add it to the
   // local variables of this scope.
-  Variable* DeclarePrivateName(const AstRawString* name, bool* was_added);
+  Variable* DeclarePrivateName(const AstRawString* name, VariableMode mode,
+                               bool* was_added);
 
   void AddUnresolvedPrivateName(VariableProxy* proxy);
 

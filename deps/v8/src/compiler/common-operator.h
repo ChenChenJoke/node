@@ -499,6 +499,7 @@ class V8_EXPORT_PRIVATE CommonOperatorBuilder final
   const Operator* NumberConstant(volatile double);
   const Operator* PointerConstant(intptr_t);
   const Operator* HeapConstant(const Handle<HeapObject>&);
+  const Operator* CompressedHeapConstant(const Handle<HeapObject>&);
   const Operator* ObjectId(uint32_t);
 
   const Operator* RelocatableInt32Constant(int32_t value,
@@ -529,8 +530,6 @@ class V8_EXPORT_PRIVATE CommonOperatorBuilder final
                              OutputFrameStateCombine state_combine,
                              const FrameStateFunctionInfo* function_info);
   const Operator* Call(const CallDescriptor* call_descriptor);
-  const Operator* CallWithCallerSavedRegisters(
-      const CallDescriptor* call_descriptor);
   const Operator* TailCall(const CallDescriptor* call_descriptor);
   const Operator* Projection(size_t index);
   const Operator* Retain();

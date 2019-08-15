@@ -782,10 +782,10 @@ class ArrayConcatVisitor {
     storage_ = isolate_->global_handles()->Create(storage);
   }
 
-  class FastElementsField : public BitField<bool, 0, 1> {};
-  class ExceedsLimitField : public BitField<bool, 1, 1> {};
-  class IsFixedArrayField : public BitField<bool, 2, 1> {};
-  class HasSimpleElementsField : public BitField<bool, 3, 1> {};
+  using FastElementsField = BitField<bool, 0, 1>;
+  using ExceedsLimitField = BitField<bool, 1, 1>;
+  using IsFixedArrayField = BitField<bool, 2, 1>;
+  using HasSimpleElementsField = BitField<bool, 3, 1>;
 
   bool fast_elements() const { return FastElementsField::decode(bit_field_); }
   void set_fast_elements(bool fast) {
@@ -970,8 +970,9 @@ void CollectElementIndices(Isolate* isolate, Handle<JSObject> object,
     }
     case FAST_STRING_WRAPPER_ELEMENTS:
     case SLOW_STRING_WRAPPER_ELEMENTS: {
-      DCHECK(object->IsJSValue());
-      Handle<JSValue> js_value = Handle<JSValue>::cast(object);
+      DCHECK(object->IsJSPrimitiveWrapper());
+      Handle<JSPrimitiveWrapper> js_value =
+          Handle<JSPrimitiveWrapper>::cast(object);
       DCHECK(js_value->value().IsString());
       Handle<String> string(String::cast(js_value->value()), isolate);
       uint32_t length = static_cast<uint32_t>(string->length());

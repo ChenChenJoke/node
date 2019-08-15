@@ -243,17 +243,6 @@ class S390OperandGenerator final : public OperandGenerator {
   bool Is64BitOperand(Node* node) {
     return MachineRepresentation::kWord64 == GetRepresentation(node);
   }
-
-  // Use the stack pointer if the node is LoadStackPointer, otherwise assign a
-  // register.
-  InstructionOperand UseRegisterOrStackPointer(Node* node) {
-    if (node->opcode() == IrOpcode::kLoadStackPointer) {
-      return LocationOperand(LocationOperand::EXPLICIT,
-                             LocationOperand::REGISTER,
-                             MachineRepresentation::kWord32, sp.code());
-    }
-    return UseRegister(node);
-  }
 };
 
 namespace {
@@ -447,11 +436,13 @@ void VisitTryTruncateDouble(InstructionSelector* selector, ArchOpcode opcode,
 #endif
 
 template <class CanCombineWithLoad>
-void GenerateRightOperands(InstructionSelector* selector, Node* node,
-                           Node* right, InstructionCode& opcode,
-                           OperandModes& operand_mode,
-                           InstructionOperand* inputs, size_t& input_count,
-                           CanCombineWithLoad canCombineWithLoad) {
+void GenerateRightOperands(
+    InstructionSelector* selector, Node* node, Node* right,
+    InstructionCode& opcode,     // NOLINT(runtime/references)
+    OperandModes& operand_mode,  // NOLINT(runtime/references)
+    InstructionOperand* inputs,
+    size_t& input_count,  // NOLINT(runtime/references)
+    CanCombineWithLoad canCombineWithLoad) {
   S390OperandGenerator g(selector);
 
   if ((operand_mode & OperandMode::kAllowImmediate) &&
@@ -491,11 +482,13 @@ void GenerateRightOperands(InstructionSelector* selector, Node* node,
 }
 
 template <class CanCombineWithLoad>
-void GenerateBinOpOperands(InstructionSelector* selector, Node* node,
-                           Node* left, Node* right, InstructionCode& opcode,
-                           OperandModes& operand_mode,
-                           InstructionOperand* inputs, size_t& input_count,
-                           CanCombineWithLoad canCombineWithLoad) {
+void GenerateBinOpOperands(
+    InstructionSelector* selector, Node* node, Node* left, Node* right,
+    InstructionCode& opcode,     // NOLINT(runtime/references)
+    OperandModes& operand_mode,  // NOLINT(runtime/references)
+    InstructionOperand* inputs,
+    size_t& input_count,  // NOLINT(runtime/references)
+    CanCombineWithLoad canCombineWithLoad) {
   S390OperandGenerator g(selector);
   // left is always register
   InstructionOperand const left_input = g.UseRegister(left);
@@ -686,9 +679,9 @@ void InstructionSelector::VisitStackSlot(Node* node) {
        sequence()->AddImmediate(Constant(slot)), 0, nullptr);
 }
 
-void InstructionSelector::VisitDebugAbort(Node* node) {
+void InstructionSelector::VisitAbortCSAAssert(Node* node) {
   S390OperandGenerator g(this);
-  Emit(kArchDebugAbort, g.NoOutput(), g.UseFixed(node->InputAt(0), r3));
+  Emit(kArchAbortCSAAssert, g.NoOutput(), g.UseFixed(node->InputAt(0), r3));
 }
 
 void InstructionSelector::VisitLoad(Node* node) {
@@ -723,7 +716,8 @@ static void VisitGeneralStore(
   Node* base = node->InputAt(0);
   Node* offset = node->InputAt(1);
   Node* value = node->InputAt(2);
-  if (write_barrier_kind != kNoWriteBarrier) {
+  if (write_barrier_kind != kNoWriteBarrier &&
+      V8_LIKELY(!FLAG_disable_write_barriers)) {
     DCHECK(CanBeTaggedPointer(rep));
     AddressingMode addressing_mode;
     InstructionOperand inputs[3];
@@ -832,6 +826,15 @@ void InstructionSelector::VisitUnalignedLoad(Node* node) { UNREACHABLE(); }
 
 // Architecture supports unaligned access, therefore VisitStore is used instead
 void InstructionSelector::VisitUnalignedStore(Node* node) { UNREACHABLE(); }
+
+void InstructionSelector::VisitStackPointerGreaterThan(
+    Node* node, FlagsContinuation* cont) {
+  Node* const value = node->InputAt(0);
+  InstructionCode opcode = kArchStackPointerGreaterThan;
+
+  S390OperandGenerator g(this);
+  EmitWithContinuation(opcode, g.UseRegister(value), cont);
+}
 
 #if 0
 static inline bool IsContiguousMask32(uint32_t value, int* mb, int* me) {
@@ -1677,7 +1680,7 @@ void VisitWordCompare(InstructionSelector* selector, Node* node,
     return VisitLoadAndTest(selector, load_and_test, node, left, cont, true);
   }
 
-  inputs[input_count++] = g.UseRegisterOrStackPointer(left);
+  inputs[input_count++] = g.UseRegister(left);
   if (g.CanBeMemoryOperand(opcode, node, right, effect_level)) {
     // generate memory operand
     AddressingMode addressing_mode = g.GetEffectiveAddressMemoryOperand(
@@ -2004,6 +2007,9 @@ void InstructionSelector::VisitWordCompareZero(Node* user, Node* value,
         // doesn't generate cc, so ignore
         break;
 #endif
+      case IrOpcode::kStackPointerGreaterThan:
+        cont->OverwriteAndNegateIfEqual(kStackPointerGreaterThanCondition);
+        return VisitStackPointerGreaterThan(value, cont);
       default:
         break;
     }
@@ -2192,6 +2198,11 @@ void InstructionSelector::EmitPrepareArguments(
     }
     DCHECK(num_slots == slot);
   }
+}
+
+void InstructionSelector::VisitMemoryBarrier(Node* node) {
+  S390OperandGenerator g(this);
+  Emit(kArchNop, g.NoOutput());
 }
 
 bool InstructionSelector::IsTailCallAddressImmediate() { return false; }

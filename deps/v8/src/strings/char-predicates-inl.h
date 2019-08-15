@@ -51,6 +51,18 @@ inline constexpr bool IsBinaryDigit(uc32 c) {
   return c == '0' || c == '1';
 }
 
+inline constexpr bool IsAsciiLower(uc32 c) { return IsInRange(c, 'a', 'z'); }
+
+inline constexpr bool IsAsciiUpper(uc32 c) { return IsInRange(c, 'A', 'Z'); }
+
+inline constexpr uc32 ToAsciiUpper(uc32 c) {
+  return c & ~(IsAsciiLower(c) << 5);
+}
+
+inline constexpr uc32 ToAsciiLower(uc32 c) {
+  return c | (IsAsciiUpper(c) << 5);
+}
+
 inline constexpr bool IsRegExpWord(uc16 c) {
   return IsInRange(AsciiAlphaToLower(c), 'a', 'z') || IsDecimalDigit(c) ||
          (c == '_');
@@ -71,11 +83,11 @@ enum AsciiCharFlags {
 constexpr uint8_t BuildAsciiCharFlags(uc32 c) {
   // clang-format off
   return
-    (IsAsciiIdentifier(c) || c == '\\') ? (
-      kIsIdentifierPart | (!IsDecimalDigit(c) ? kIsIdentifierStart : 0)) : 0 |
-    (c == ' ' || c == '\t' || c == '\v' || c == '\f') ?
-      kIsWhiteSpace | kIsWhiteSpaceOrLineTerminator : 0 |
-    (c == '\r' || c == '\n') ? kIsWhiteSpaceOrLineTerminator : 0;
+    ((IsAsciiIdentifier(c) || c == '\\') ? (
+      kIsIdentifierPart | (!IsDecimalDigit(c) ? kIsIdentifierStart : 0)) : 0) |
+    ((c == ' ' || c == '\t' || c == '\v' || c == '\f') ?
+      kIsWhiteSpace | kIsWhiteSpaceOrLineTerminator : 0) |
+    ((c == '\r' || c == '\n') ? kIsWhiteSpaceOrLineTerminator : 0);
   // clang-format on
 }
 const constexpr uint8_t kAsciiCharFlags[128] = {

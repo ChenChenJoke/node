@@ -165,9 +165,9 @@ void CheckDebuggerUnloaded() {
   CcTest::CollectAllGarbage();
 
   // Iterate the heap and check that there are no debugger related objects left.
-  HeapIterator iterator(CcTest::heap());
-  for (HeapObject obj = iterator.next(); !obj.is_null();
-       obj = iterator.next()) {
+  HeapObjectIterator iterator(CcTest::heap());
+  for (HeapObject obj = iterator.Next(); !obj.is_null();
+       obj = iterator.Next()) {
     CHECK(!obj.IsDebugInfo());
   }
 }
@@ -553,7 +553,7 @@ TEST(BreakPointBuiltin) {
   builtin = CompileRun("String.prototype.repeat").As<v8::Function>();
 
   // Run with breakpoint.
-  bp = SetBreakPoint(builtin, 0);
+  bp = SetBreakPoint(builtin, 0, "this != 1");
   ExpectString("'b'.repeat(10)", "bbbbbbbbbb");
   CHECK_EQ(1, break_point_hit_count);
 
@@ -754,7 +754,7 @@ TEST(BreakPointConstructorBuiltin) {
   CHECK_EQ(0, break_point_hit_count);
 
   // Run with breakpoint.
-  bp = SetBreakPoint(builtin, 0);
+  bp = SetBreakPoint(builtin, 0, "this != 1");
   ExpectString("(new Promise(()=>{})).toString()", "[object Promise]");
   CHECK_EQ(1, break_point_hit_count);
 
@@ -821,7 +821,7 @@ TEST(BreakPointInlinedBuiltin) {
   CHECK_EQ(0, break_point_hit_count);
 
   // Run with breakpoint.
-  bp = SetBreakPoint(builtin, 0);
+  bp = SetBreakPoint(builtin, 0, "this != 1");
   CompileRun("Math.sin(0.1);");
   CHECK_EQ(1, break_point_hit_count);
   CompileRun("test(0.2);");
@@ -869,7 +869,7 @@ TEST(BreakPointInlineBoundBuiltin) {
   CHECK_EQ(0, break_point_hit_count);
 
   // Run with breakpoint.
-  bp = SetBreakPoint(builtin, 0);
+  bp = SetBreakPoint(builtin, 0, "this != 1");
   CompileRun("'a'.repeat(2);");
   CHECK_EQ(1, break_point_hit_count);
   CompileRun("test(7);");
@@ -914,7 +914,7 @@ TEST(BreakPointInlinedConstructorBuiltin) {
   CHECK_EQ(0, break_point_hit_count);
 
   // Run with breakpoint.
-  bp = SetBreakPoint(builtin, 0);
+  bp = SetBreakPoint(builtin, 0, "this != 1");
   CompileRun("new Promise(()=>{});");
   CHECK_EQ(1, break_point_hit_count);
   CompileRun("test(7);");
@@ -1090,17 +1090,60 @@ TEST(BreakPointApiFunction) {
   break_point_hit_count = 0;
 
   // Run with breakpoint.
-  bp = SetBreakPoint(function, 0);
+  bp = SetBreakPoint(function, 0, "this != 1");
   ExpectInt32("f()", 2);
   CHECK_EQ(1, break_point_hit_count);
 
   ExpectInt32("f()", 2);
   CHECK_EQ(2, break_point_hit_count);
 
+  function->Call(env.local(), v8::Undefined(env->GetIsolate()), 0, nullptr)
+      .ToLocalChecked();
+  CHECK_EQ(3, break_point_hit_count);
+
   // Run without breakpoints.
   ClearBreakPoint(bp);
   ExpectInt32("f()", 2);
+  CHECK_EQ(3, break_point_hit_count);
+
+  v8::debug::SetDebugDelegate(env->GetIsolate(), nullptr);
+  CheckDebuggerUnloaded();
+}
+
+TEST(BreakPointApiConstructor) {
+  LocalContext env;
+  v8::HandleScope scope(env->GetIsolate());
+
+  DebugEventCounter delegate;
+  v8::debug::SetDebugDelegate(env->GetIsolate(), &delegate);
+
+  i::Handle<i::BreakPoint> bp;
+
+  v8::Local<v8::FunctionTemplate> function_template =
+      v8::FunctionTemplate::New(env->GetIsolate(), NoOpFunctionCallback);
+
+  v8::Local<v8::Function> function =
+      function_template->GetFunction(env.local()).ToLocalChecked();
+
+  env->Global()->Set(env.local(), v8_str("f"), function).ToChecked();
+
+  // === Test simple builtin ===
+  break_point_hit_count = 0;
+
+  // Run with breakpoint.
+  bp = SetBreakPoint(function, 0, "this != 1");
+  CompileRun("new f()");
+  CHECK_EQ(1, break_point_hit_count);
+  CompileRun("new f()");
   CHECK_EQ(2, break_point_hit_count);
+
+  function->NewInstance(env.local()).ToLocalChecked();
+  CHECK_EQ(3, break_point_hit_count);
+
+  // Run without breakpoints.
+  ClearBreakPoint(bp);
+  CompileRun("new f()");
+  CHECK_EQ(3, break_point_hit_count);
 
   v8::debug::SetDebugDelegate(env->GetIsolate(), nullptr);
   CheckDebuggerUnloaded();
@@ -3854,7 +3897,7 @@ TEST(DebugBreakOffThreadTerminate) {
   DebugBreakTriggerTerminate delegate;
   v8::debug::SetDebugDelegate(isolate, &delegate);
   TerminationThread terminator(isolate);
-  terminator.Start();
+  CHECK(terminator.Start());
   v8::TryCatch try_catch(env->GetIsolate());
   env->GetIsolate()->RequestInterrupt(BreakRightNow, nullptr);
   CompileRun("while (true);");
@@ -3950,7 +3993,7 @@ class ArchiveRestoreThread : public v8::base::Thread,
       // on) so that the ThreadManager is forced to archive and restore
       // the current thread.
       ArchiveRestoreThread child(isolate_, spawn_count_ - 1);
-      child.Start();
+      CHECK(child.Start());
       child.Join();
 
       // The child thread sets itself as the debug delegate, so we need to
@@ -4151,7 +4194,7 @@ size_t NearHeapLimitCallback(void* data, size_t current_heap_limit,
 UNINITIALIZED_TEST(DebugSetOutOfMemoryListener) {
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
-  create_params.constraints.set_max_old_space_size(10);
+  create_params.constraints.set_max_old_generation_size_in_bytes(10 * i::MB);
   v8::Isolate* isolate = v8::Isolate::New(create_params);
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   {
@@ -4368,9 +4411,9 @@ TEST(DebugEvaluateNoSideEffect) {
   i::Isolate* isolate = CcTest::i_isolate();
   std::vector<i::Handle<i::JSFunction>> all_functions;
   {
-    i::HeapIterator iterator(isolate->heap());
-    for (i::HeapObject obj = iterator.next(); !obj.is_null();
-         obj = iterator.next()) {
+    i::HeapObjectIterator iterator(isolate->heap());
+    for (i::HeapObject obj = iterator.Next(); !obj.is_null();
+         obj = iterator.Next()) {
       if (!obj.IsJSFunction()) continue;
       i::JSFunction fun = i::JSFunction::cast(obj);
       all_functions.emplace_back(fun, isolate);
@@ -4665,8 +4708,8 @@ TEST(GetPrivateFields) {
                                    .ToLocalChecked()
                                    ->ToObject(context)
                                    .ToLocalChecked());
-    Handle<v8::internal::JSValue> private_value =
-        Handle<v8::internal::JSValue>::cast(private_name);
+    Handle<v8::internal::JSPrimitiveWrapper> private_value =
+        Handle<v8::internal::JSPrimitiveWrapper>::cast(private_name);
     Handle<v8::internal::Symbol> priv_symbol(
         v8::internal::Symbol::cast(private_value->value()), isolate);
     CHECK(priv_symbol->is_private_name());
@@ -4694,8 +4737,8 @@ TEST(GetPrivateFields) {
                                    .ToLocalChecked()
                                    ->ToObject(context)
                                    .ToLocalChecked());
-    Handle<v8::internal::JSValue> private_value =
-        Handle<v8::internal::JSValue>::cast(private_name);
+    Handle<v8::internal::JSPrimitiveWrapper> private_value =
+        Handle<v8::internal::JSPrimitiveWrapper>::cast(private_name);
     Handle<v8::internal::Symbol> priv_symbol(
         v8::internal::Symbol::cast(private_value->value()), isolate);
     CHECK(priv_symbol->is_private_name());
@@ -4725,8 +4768,8 @@ TEST(GetPrivateFields) {
                                    .ToLocalChecked()
                                    ->ToObject(context)
                                    .ToLocalChecked());
-    Handle<v8::internal::JSValue> private_value =
-        Handle<v8::internal::JSValue>::cast(private_name);
+    Handle<v8::internal::JSPrimitiveWrapper> private_value =
+        Handle<v8::internal::JSPrimitiveWrapper>::cast(private_name);
     Handle<v8::internal::Symbol> priv_symbol(
         v8::internal::Symbol::cast(private_value->value()), isolate);
     CHECK(priv_symbol->is_private_name());

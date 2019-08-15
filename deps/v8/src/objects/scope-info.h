@@ -22,7 +22,7 @@ class Handle;
 class Isolate;
 template <typename T>
 class MaybeHandle;
-class ModuleInfo;
+class SourceTextModuleInfo;
 class Scope;
 class Zone;
 
@@ -113,7 +113,7 @@ class ScopeInfo : public FixedArray {
   int EndPosition() const;
   void SetPositionInfo(int start, int end);
 
-  ModuleInfo ModuleDescriptorInfo() const;
+  SourceTextModuleInfo ModuleDescriptorInfo() const;
 
   // Return the name of the given context local.
   String ContextLocalName(int var) const;
@@ -220,39 +220,26 @@ class ScopeInfo : public FixedArray {
   enum VariableAllocationInfo { NONE, STACK, CONTEXT, UNUSED };
 
   // Properties of scopes.
-  class ScopeTypeField : public BitField<ScopeType, 0, 4> {};
-  class CallsSloppyEvalField : public BitField<bool, ScopeTypeField::kNext, 1> {
-  };
+  using ScopeTypeField = BitField<ScopeType, 0, 4>;
+  using CallsSloppyEvalField = ScopeTypeField::Next<bool, 1>;
   STATIC_ASSERT(LanguageModeSize == 2);
-  class LanguageModeField
-      : public BitField<LanguageMode, CallsSloppyEvalField::kNext, 1> {};
-  class DeclarationScopeField
-      : public BitField<bool, LanguageModeField::kNext, 1> {};
-  class ReceiverVariableField
-      : public BitField<VariableAllocationInfo, DeclarationScopeField::kNext,
-                        2> {};
-  class HasClassBrandField
-      : public BitField<bool, ReceiverVariableField::kNext, 1> {};
-  class HasNewTargetField
-      : public BitField<bool, HasClassBrandField::kNext, 1> {};
-  class FunctionVariableField
-      : public BitField<VariableAllocationInfo, HasNewTargetField::kNext, 2> {};
+  using LanguageModeField = CallsSloppyEvalField::Next<LanguageMode, 1>;
+  using DeclarationScopeField = LanguageModeField::Next<bool, 1>;
+  using ReceiverVariableField =
+      DeclarationScopeField::Next<VariableAllocationInfo, 2>;
+  using HasClassBrandField = ReceiverVariableField::Next<bool, 1>;
+  using HasNewTargetField = HasClassBrandField::Next<bool, 1>;
+  using FunctionVariableField =
+      HasNewTargetField::Next<VariableAllocationInfo, 2>;
   // TODO(cbruni): Combine with function variable field when only storing the
   // function name.
-  class HasInferredFunctionNameField
-      : public BitField<bool, FunctionVariableField::kNext, 1> {};
-  class IsAsmModuleField
-      : public BitField<bool, HasInferredFunctionNameField::kNext, 1> {};
-  class HasSimpleParametersField
-      : public BitField<bool, IsAsmModuleField::kNext, 1> {};
-  class FunctionKindField
-      : public BitField<FunctionKind, HasSimpleParametersField::kNext, 5> {};
-  class HasOuterScopeInfoField
-      : public BitField<bool, FunctionKindField::kNext, 1> {};
-  class IsDebugEvaluateScopeField
-      : public BitField<bool, HasOuterScopeInfoField::kNext, 1> {};
-  class ForceContextAllocationField
-      : public BitField<bool, IsDebugEvaluateScopeField::kNext, 1> {};
+  using HasInferredFunctionNameField = FunctionVariableField::Next<bool, 1>;
+  using IsAsmModuleField = HasInferredFunctionNameField::Next<bool, 1>;
+  using HasSimpleParametersField = IsAsmModuleField::Next<bool, 1>;
+  using FunctionKindField = HasSimpleParametersField::Next<FunctionKind, 5>;
+  using HasOuterScopeInfoField = FunctionKindField::Next<bool, 1>;
+  using IsDebugEvaluateScopeField = HasOuterScopeInfoField::Next<bool, 1>;
+  using ForceContextAllocationField = IsDebugEvaluateScopeField::Next<bool, 1>;
 
   STATIC_ASSERT(kLastFunctionKind <= FunctionKindField::kMax);
 
@@ -284,10 +271,10 @@ class ScopeInfo : public FixedArray {
   //    the scope belongs to a function or script.
   // 7. OuterScopeInfoIndex:
   //    The outer scope's ScopeInfo or the hole if there's none.
-  // 8. ModuleInfo, ModuleVariableCount, and ModuleVariables:
-  //    For a module scope, this part contains the ModuleInfo, the number of
-  //    MODULE-allocated variables, and the metadata of those variables.  For
-  //    non-module scopes it is empty.
+  // 8. SourceTextModuleInfo, ModuleVariableCount, and ModuleVariables:
+  //    For a module scope, this part contains the SourceTextModuleInfo, the
+  //    number of MODULE-allocated variables, and the metadata of those
+  //    variables.  For non-module scopes it is empty.
   int ContextLocalNamesIndex() const;
   int ContextLocalInfosIndex() const;
   int ReceiverInfoIndex() const;
@@ -319,11 +306,10 @@ class ScopeInfo : public FixedArray {
   static const int kPositionInfoEntries = 2;
 
   // Properties of variables.
-  class VariableModeField : public BitField<VariableMode, 0, 3> {};
-  class InitFlagField : public BitField<InitializationFlag, 3, 1> {};
-  class MaybeAssignedFlagField : public BitField<MaybeAssignedFlag, 4, 1> {};
-  class ParameterNumberField
-      : public BitField<uint32_t, MaybeAssignedFlagField::kNext, 16> {};
+  using VariableModeField = BitField<VariableMode, 0, 4>;
+  using InitFlagField = VariableModeField::Next<InitializationFlag, 1>;
+  using MaybeAssignedFlagField = InitFlagField::Next<MaybeAssignedFlag, 1>;
+  using ParameterNumberField = MaybeAssignedFlagField::Next<uint32_t, 16>;
 
   friend class ScopeIterator;
   friend std::ostream& operator<<(std::ostream& os,

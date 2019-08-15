@@ -61,6 +61,10 @@ class V8_EXPORT_PRIVATE DisjointAllocationPool final {
   // failure.
   base::AddressRegion Allocate(size_t size);
 
+  // Allocate a contiguous region of size {size} within {region}. Return an
+  // empty pool on failure.
+  base::AddressRegion AllocateInRegion(size_t size, base::AddressRegion);
+
   bool IsEmpty() const { return regions_.empty(); }
   const std::list<base::AddressRegion>& regions() const { return regions_; }
 
@@ -176,7 +180,6 @@ class V8_EXPORT_PRIVATE WasmCode final {
 
   enum FlushICache : bool { kFlushICache = true, kNoFlushICache = false };
 
-  static constexpr uint32_t kAnonymousFuncIndex = 0xffffffff;
   STATIC_ASSERT(kAnonymousFuncIndex > kV8MaxWasmFunctions);
 
  private:
@@ -270,6 +273,8 @@ class V8_EXPORT_PRIVATE WasmCode final {
   DISALLOW_COPY_AND_ASSIGN(WasmCode);
 };
 
+WasmCode::Kind GetCodeKind(const WasmCompilationResult& result);
+
 // Return a textual description of the kind.
 const char* GetWasmCodeKindAsString(WasmCode::Kind);
 
@@ -277,7 +282,8 @@ const char* GetWasmCodeKindAsString(WasmCode::Kind);
 class WasmCodeAllocator {
  public:
   WasmCodeAllocator(WasmCodeManager*, VirtualMemory code_space,
-                    bool can_request_more);
+                    bool can_request_more,
+                    std::shared_ptr<Counters> async_counters);
   ~WasmCodeAllocator();
 
   size_t committed_code_space() const {
@@ -293,12 +299,21 @@ class WasmCodeAllocator {
   // Allocate code space. Returns a valid buffer or fails with OOM (crash).
   Vector<byte> AllocateForCode(NativeModule*, size_t size);
 
+  // Allocate code space within a specific region. Returns a valid buffer or
+  // fails with OOM (crash).
+  Vector<byte> AllocateForCodeInRegion(NativeModule*, size_t size,
+                                       base::AddressRegion);
+
   // Sets permissions of all owned code space to executable, or read-write (if
   // {executable} is false). Returns true on success.
   V8_EXPORT_PRIVATE bool SetExecutable(bool executable);
 
   // Free memory pages of all given code objects. Used for wasm code GC.
   void FreeCode(Vector<WasmCode* const>);
+
+  // Returns the region of the single code space managed by this code allocator.
+  // Will fail if more than one code space has been created.
+  base::AddressRegion GetSingleCodeRegion() const;
 
  private:
   // The engine-wide wasm code manager.
@@ -315,7 +330,7 @@ class WasmCodeAllocator {
   // Code space that was allocated for code (subset of {owned_code_space_}).
   DisjointAllocationPool allocated_code_space_;
   // Code space that was allocated before but is dead now. Full pages within
-  // this region are discarded. It's still a subset of {owned_code_space_}).
+  // this region are discarded. It's still a subset of {owned_code_space_}.
   DisjointAllocationPool freed_code_space_;
   std::vector<VirtualMemory> owned_code_space_;
 
@@ -329,6 +344,8 @@ class WasmCodeAllocator {
   bool is_executable_ = false;
 
   const bool can_request_more_memory_;
+
+  std::shared_ptr<Counters> async_counters_;
 };
 
 class V8_EXPORT_PRIVATE NativeModule final {
@@ -396,20 +413,18 @@ class V8_EXPORT_PRIVATE NativeModule final {
   }
 
   Address jump_table_start() const {
-    return jump_table_ ? jump_table_->instruction_start() : kNullAddress;
+    return main_jump_table_ ? main_jump_table_->instruction_start()
+                            : kNullAddress;
   }
 
-  ptrdiff_t jump_table_offset(uint32_t func_index) const {
-    DCHECK_GE(func_index, num_imported_functions());
-    return GetCallTargetForFunction(func_index) - jump_table_start();
-  }
+  uint32_t GetJumpTableOffset(uint32_t func_index) const;
 
   bool is_jump_table_slot(Address address) const {
-    return jump_table_->contains(address);
+    return main_jump_table_->contains(address);
   }
 
-  // Returns the target to call for the given function (returns a jump table
-  // slot within {jump_table_}).
+  // Returns the canonical target to call for the given function (the slot in
+  // the first jump table).
   Address GetCallTargetForFunction(uint32_t func_index) const;
 
   // Reverse lookup from a given call target (i.e. a jump table slot as the
@@ -484,8 +499,14 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
  private:
   friend class WasmCode;
+  friend class WasmCodeAllocator;
   friend class WasmCodeManager;
   friend class NativeModuleModificationScope;
+
+  struct CodeSpaceData {
+    base::AddressRegion region;
+    WasmCode* jump_table;
+  };
 
   // Private constructor, called via {WasmCodeManager::NewNativeModule()}.
   NativeModule(WasmEngine* engine, const WasmFeatures& enabled_features,
@@ -506,7 +527,11 @@ class V8_EXPORT_PRIVATE NativeModule final {
   WasmCode* AddAndPublishAnonymousCode(Handle<Code>, WasmCode::Kind kind,
                                        const char* name = nullptr);
 
-  WasmCode* CreateEmptyJumpTable(uint32_t jump_table_size);
+  WasmCode* CreateEmptyJumpTableInRegion(uint32_t jump_table_size,
+                                         base::AddressRegion);
+
+  // Called by the {WasmCodeAllocator} to register a new code space.
+  void AddCodeSpace(base::AddressRegion);
 
   // Hold the {allocation_mutex_} when calling this method.
   bool has_interpreter_redirection(uint32_t func_index) {
@@ -555,8 +580,13 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // Jump table used for runtime stubs (i.e. trampolines to embedded builtins).
   WasmCode* runtime_stub_table_ = nullptr;
 
-  // Jump table used to easily redirect wasm function calls.
-  WasmCode* jump_table_ = nullptr;
+  // Jump table used by external calls (from JS). Wasm calls use one of the jump
+  // tables stored in {code_space_data_}.
+  WasmCode* main_jump_table_ = nullptr;
+
+  // Lazy compile stub table, containing entries to jump to the
+  // {WasmCompileLazy} builtin, passing the function index.
+  WasmCode* lazy_compile_table_ = nullptr;
 
   // The compilation state keeps track of compilation tasks for this module.
   // Note that its destructor blocks until all tasks are finished/aborted and
@@ -582,6 +612,9 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // this module marking those functions that have been redirected.
   std::unique_ptr<uint8_t[]> interpreter_redirections_;
 
+  // Data (especially jump table) per code space.
+  std::vector<CodeSpaceData> code_space_data_;
+
   // End of fields protected by {allocation_mutex_}.
   //////////////////////////////////////////////////////////////////////////////
 
@@ -605,9 +638,9 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
   }
 #endif
 
-#if defined(V8_OS_WIN_X64)
+#if defined(V8_OS_WIN64)
   bool CanRegisterUnwindInfoForNonABICompliantCodeRange() const;
-#endif
+#endif  // V8_OS_WIN64
 
   NativeModule* LookupNativeModule(Address pc) const;
   WasmCode* LookupCode(Address pc) const;
@@ -617,11 +650,13 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
 
   void SetMaxCommittedMemoryForTesting(size_t limit);
 
-#if defined(V8_OS_WIN_X64)
-  void DisableWin64UnwindInfoForTesting() {
-    is_win64_unwind_info_disabled_for_testing_ = true;
+  void DisableImplicitAllocationsForTesting() {
+    implicit_allocations_disabled_for_testing_ = true;
   }
-#endif
+
+  bool IsImplicitAllocationsDisabledForTesting() const {
+    return implicit_allocations_disabled_for_testing_;
+  }
 
   static size_t EstimateNativeModuleCodeSize(const WasmModule* module);
   static size_t EstimateNativeModuleNonCodeSize(const WasmModule* module);
@@ -649,11 +684,9 @@ class V8_EXPORT_PRIVATE WasmCodeManager final {
 
   size_t max_committed_code_space_;
 
-#if defined(V8_OS_WIN_X64)
-  bool is_win64_unwind_info_disabled_for_testing_;
-#endif
+  bool implicit_allocations_disabled_for_testing_ = false;
 
-  std::atomic<size_t> total_committed_code_space_;
+  std::atomic<size_t> total_committed_code_space_{0};
   // If the committed code space exceeds {critical_committed_code_space_}, then
   // we trigger a GC before creating the next module. This value is set to the
   // currently committed space plus 50% of the available code space on creation

@@ -86,7 +86,7 @@ class FunctionTemplateInfo : public TemplateInfo {
   DECL_ACCESSORS(rare_data, HeapObject)
 
 #define DECL_RARE_ACCESSORS(Name, CamelName, Type)                           \
-  inline Type Get##CamelName();                                              \
+  DECL_GETTER(Get##CamelName, Type)                                          \
   static inline void Set##CamelName(                                         \
       Isolate* isolate, Handle<FunctionTemplateInfo> function_template_info, \
       Handle<Type> Name);
@@ -227,9 +227,8 @@ class ObjectTemplateInfo : public TemplateInfo {
   inline ObjectTemplateInfo GetParent(Isolate* isolate);
 
  private:
-  class IsImmutablePrototype : public BitField<bool, 0, 1> {};
-  class EmbedderFieldCount
-      : public BitField<int, IsImmutablePrototype::kNext, 29> {};
+  using IsImmutablePrototype = BitField<bool, 0, 1>;
+  using EmbedderFieldCount = IsImmutablePrototype::Next<int, 29>;
 
   OBJECT_CONSTRUCTORS(ObjectTemplateInfo, TemplateInfo);
 };

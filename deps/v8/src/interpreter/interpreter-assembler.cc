@@ -48,9 +48,7 @@ InterpreterAssembler::InterpreterAssembler(CodeAssemblerState* state,
       accumulator_use_(AccumulatorUse::kNone),
       made_call_(false),
       reloaded_frame_ptr_(false),
-      bytecode_array_valid_(true),
-      disable_stack_check_across_call_(false),
-      stack_pointer_before_call_(nullptr) {
+      bytecode_array_valid_(true) {
 #ifdef V8_TRACE_IGNITION
   TraceBytecode(Runtime::kInterpreterTraceBytecodeEntry);
 #endif
@@ -682,22 +680,11 @@ void InterpreterAssembler::CallPrologue() {
     SaveBytecodeOffset();
   }
 
-  if (FLAG_debug_code && !disable_stack_check_across_call_) {
-    DCHECK_NULL(stack_pointer_before_call_);
-    stack_pointer_before_call_ = LoadStackPointer();
-  }
   bytecode_array_valid_ = false;
   made_call_ = true;
 }
 
 void InterpreterAssembler::CallEpilogue() {
-  if (FLAG_debug_code && !disable_stack_check_across_call_) {
-    Node* stack_pointer_after_call = LoadStackPointer();
-    Node* stack_pointer_before_call = stack_pointer_before_call_;
-    stack_pointer_before_call_ = nullptr;
-    AbortIfWordNotEqual(stack_pointer_before_call, stack_pointer_after_call,
-                        AbortReason::kUnexpectedStackPointer);
-  }
 }
 
 void InterpreterAssembler::IncrementCallCount(Node* feedback_vector,
@@ -1265,7 +1252,7 @@ void InterpreterAssembler::UpdateInterruptBudget(Node* weight, bool backward) {
 
   // Make sure we include the current bytecode in the budget calculation.
   TNode<Int32T> budget_after_bytecode =
-      Signed(Int32Sub(old_budget, Int32Constant(CurrentBytecodeSize())));
+      Int32Sub(old_budget, Int32Constant(CurrentBytecodeSize()));
 
   Label done(this);
   TVARIABLE(Int32T, new_budget);
@@ -1501,17 +1488,15 @@ void InterpreterAssembler::UpdateInterruptBudgetOnReturn() {
   UpdateInterruptBudget(profiling_weight, true);
 }
 
-Node* InterpreterAssembler::LoadOSRNestingLevel() {
+Node* InterpreterAssembler::LoadOsrNestingLevel() {
   return LoadObjectField(BytecodeArrayTaggedPointer(),
-                         BytecodeArray::kOSRNestingLevelOffset,
+                         BytecodeArray::kOsrNestingLevelOffset,
                          MachineType::Int8());
 }
 
 void InterpreterAssembler::Abort(AbortReason abort_reason) {
-  disable_stack_check_across_call_ = true;
   Node* abort_id = SmiConstant(abort_reason);
   CallRuntime(Runtime::kAbort, GetContext(), abort_id);
-  disable_stack_check_across_call_ = false;
 }
 
 void InterpreterAssembler::AbortIfWordNotEqual(Node* lhs, Node* rhs,

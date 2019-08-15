@@ -81,11 +81,6 @@ MessageBuilder Lint(Args&&... args) {
   return Message(TorqueMessage::Kind::kLint, std::forward<Args>(args)...);
 }
 
-// Report a LintError with the format "{type} '{name}' doesn't follow
-// '{convention}' naming convention".
-void NamingConventionError(const std::string& type, const std::string& name,
-                           const std::string& convention);
-
 bool IsLowerCamelCase(const std::string& s);
 bool IsUpperCamelCase(const std::string& s);
 bool IsSnakeCase(const std::string& s);
@@ -99,7 +94,9 @@ template <class... Args>
 
 std::string CapifyStringWithUnderscores(const std::string& camellified_string);
 std::string CamelifyString(const std::string& underscore_string);
+std::string SnakeifyString(const std::string& camel_string);
 std::string DashifyString(const std::string& underscore_string);
+std::string UnderlinifyPath(std::string path);
 
 void ReplaceFileContentsIfDifferent(const std::string& file_path,
                                     const std::string& contents);
@@ -348,6 +345,63 @@ class NullOStream : public std::ostream {
 
  private:
   NullStreambuf buffer_;
+};
+
+inline bool StringStartsWith(const std::string& s, const std::string& prefix) {
+  if (s.size() < prefix.size()) return false;
+  return s.substr(0, prefix.size()) == prefix;
+}
+inline bool StringEndsWith(const std::string& s, const std::string& suffix) {
+  if (s.size() < suffix.size()) return false;
+  return s.substr(s.size() - suffix.size()) == suffix;
+}
+
+class IfDefScope {
+ public:
+  IfDefScope(std::ostream& os, std::string d);
+  ~IfDefScope();
+
+ private:
+  IfDefScope(const IfDefScope&) = delete;
+  IfDefScope& operator=(const IfDefScope&) = delete;
+  std::ostream& os_;
+  std::string d_;
+};
+
+class NamespaceScope {
+ public:
+  NamespaceScope(std::ostream& os,
+                 std::initializer_list<std::string> namespaces);
+  ~NamespaceScope();
+
+ private:
+  NamespaceScope(const NamespaceScope&) = delete;
+  NamespaceScope& operator=(const NamespaceScope&) = delete;
+  std::ostream& os_;
+  std::vector<std::string> d_;
+};
+
+class IncludeGuardScope {
+ public:
+  IncludeGuardScope(std::ostream& os, std::string file_name);
+  ~IncludeGuardScope();
+
+ private:
+  IncludeGuardScope(const IncludeGuardScope&) = delete;
+  IncludeGuardScope& operator=(const IncludeGuardScope&) = delete;
+  std::ostream& os_;
+  std::string d_;
+};
+
+class IncludeObjectMacrosScope {
+ public:
+  explicit IncludeObjectMacrosScope(std::ostream& os);
+  ~IncludeObjectMacrosScope();
+
+ private:
+  IncludeObjectMacrosScope(const IncludeObjectMacrosScope&) = delete;
+  IncludeObjectMacrosScope& operator=(const IncludeObjectMacrosScope&) = delete;
+  std::ostream& os_;
 };
 
 }  // namespace torque
